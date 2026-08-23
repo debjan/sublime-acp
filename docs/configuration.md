@@ -1,6 +1,6 @@
 # Configuration
 
-ACP is configured through `acp.sublime-settings` (**Preferences → Package Settings → ACP → Settings**). All settings are optional - sensible defaults come from `modules/config.py`.
+ACP is configured through `ACP.sublime-settings` (**Preferences → Package Settings → ACP → Settings**). All settings are optional - sensible defaults come from `modules/config.py`.
 
 ## Settings reference
 
@@ -49,8 +49,8 @@ With more than one entry, a quick panel lets you pick; a single entry is auto-se
 
 | Setting               | Default | Purpose                                                                                                                                                                              |
 | --------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `daemon_idle_timeout` | `900`   | Seconds of inactivity before an idle daemon shuts down (`0` = never)                                                                                                                 |
 | `timeout`             | `600`   | Seconds to wait for *any* agent output before cancelling a turn. The clock resets on every streamed text, thought, tool call, or file edit - long multi-edit turns won't be cut off. |
-| `daemon_idle_timeout` | `3600`  | Seconds of inactivity before an idle daemon shuts down (`0` = never)                                                                                                                 |
 | `cache_ttl`           | `300`   | Seconds before the `@`-completions file cache expires (`0` = always refresh)                                                                                                         |
 
 ### Thoughts

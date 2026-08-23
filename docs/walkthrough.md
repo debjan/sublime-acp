@@ -107,7 +107,7 @@ The CLI prints a "Follow up with…" hint after each successful run so you can c
 | Reference a file in the prompt             | type `@` in the input panel and pick from the walked project                           |
 | Trigger an agent slash command             | type `/` in the input panel                                                            |
 | Attach the current selection automatically | set `attach_selection: true` - appends `@path:line-line` (or the text) to every prompt |
-| Change the model mid-session               | *ACP: Switch Model *(if the agent advertises the option)                               |
+| Change the model mid-session               | *ACP: Switch Model* (if the agent advertises the option)                               |
 | Switch session mode (build/plan)           | *ACP: Switch Mode* (if the agent advertises the option)                                |
 | Cancel a runaway turn                      | `Ctrl+Break` - interrupt without killing the session                                   |
 | Reuse yesterday's context                  | *ACP: Continue Last Session*                                                           |

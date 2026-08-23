@@ -8,6 +8,6 @@ User-facing documentation for the ACP plugin (Agent Client Protocol for Sublime 
 | [daemon.md](daemon.md)               | Persistent per-window agent sessions, threading, lifecycle   |
 | [permissions.md](permissions.md)     | Tool-call approval pipeline and gitignore-aware file walking |
 | [completions.md](completions.md)     | `@` path and `/` slash-command autocomplete                  |
-| [configuration.md](configuration.md) | Full reference for `acp.sublime-settings`                    |
+| [configuration.md](configuration.md) | Full reference for `ACP.sublime-settings`                    |
 
 See the [README](../README.md) for installation, quick start, commands, and the standalone CLI.

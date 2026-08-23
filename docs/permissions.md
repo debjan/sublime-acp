@@ -7,7 +7,7 @@ When an agent wants to use a tool (read a file, write a file, run a command), it
 | File                     | Responsibility                                                       |
 | ------------------------ | -------------------------------------------------------------------- |
 | `modules/permissions.py` | Full permission resolution pipeline                                  |
-| `acp.sublime-settings`   | The `permissions` setting (`auto_allow`/`auto_reject`)               |
+| `ACP.sublime-settings`   | The `permissions` setting (`auto_allow`/`auto_reject`)               |
 | `modules/config.py`      | `DEFAULT_PERMISSIONS = {"auto_allow": ["read*"], "auto_reject": []}` |
 
 ## Resolution pipeline

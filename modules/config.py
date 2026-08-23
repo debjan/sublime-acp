@@ -2,10 +2,10 @@
 
 import sublime
 
-_SETTINGS_FILE = 'acp.sublime-settings'
+_SETTINGS_FILE = 'ACP.sublime-settings'
 
 def settings():
-    """Return the (cached) ``Settings`` object for ``acp.sublime-settings``."""
+    """Return the (cached) ``Settings`` object for ``ACP.sublime-settings``."""
     return sublime.load_settings(_SETTINGS_FILE)
 
 
