@@ -1,6 +1,6 @@
 [
-    // { "keys": ["alt+shift+a"], "command": "acp" },
-    // { "keys": ["ctrl+alt+a"], "command": "acp_start" },
-    // { "keys": ["ctrl+alt+shift+a"], "command": "acp_stop" },
-    // { "keys": ["ctrl+break"], "command": "acp_interrupt" }
+    { "keys": ["alt+shift+a"], "command": "acp" },
+    { "keys": ["ctrl+alt+a"], "command": "acp_start" },
+    { "keys": ["ctrl+alt+shift+a"], "command": "acp_stop" },
+    { "keys": ["ctrl+break"], "command": "acp_interrupt" }
 ]
