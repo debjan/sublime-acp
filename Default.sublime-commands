@@ -1,0 +1,26 @@
+[
+    { "caption": "ACP: Prompt", "command": "acp" },
+    { "caption": "ACP: Actions", "command": "acp_actions" },
+    { "caption": "ACP: Start Agent Session", "command": "acp_start" },
+    { "caption": "ACP: Continue Last Session", "command": "acp_continue_session" },
+    { "caption": "ACP: Stop Agent Session", "command": "acp_stop" },
+    { "caption": "ACP: Interrupt Current Prompt", "command": "acp_interrupt" },
+    { "caption": "ACP: Switch Model", "command": "acp_switch_model" },
+    { "caption": "ACP: Switch Mode", "command": "acp_switch_mode" },
+    {
+        "caption": "Preferences: ACP Settings",
+        "command": "edit_settings",
+        "args": {
+            "base_file": "${packages}/ACP/ACP.sublime-settings",
+            "default": "{\n\t$0\n}\n"
+        }
+    },
+    {
+        "caption": "Preferences: ACP Key Bindings",
+        "command": "edit_settings",
+        "args": {
+            "base_file": "${packages}/ACP/Default.sublime-keymap",
+            "default": "[\n\t$0\n]\n"
+        }
+    }
+]

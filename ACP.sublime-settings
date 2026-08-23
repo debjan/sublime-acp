@@ -1,0 +1,105 @@
+{
+    // If more than one item is provided, the Quick panel will show for selecting the agent.
+    "commands": [
+        // {
+        //     "title": "ZeroClaw",
+        //     "cmd": "zeroclaw",
+        //     "args": ["acp"],
+        // },
+        // {
+        //     "title": "Kiro",
+        //     "cmd": "kiro-cli",
+        //     "args": ["acp"],
+        // },
+        // {
+        //     "title": "Devin",
+        //     "cmd": "devin",
+        //     "args": ["acp"],
+        //     "auth": false,
+        // },
+        // {
+        //     "title": "Opencode",
+        //     "cmd": "opencode",
+        //     "args": ["acp"],
+        // },
+        // {
+        //     "title": "Pi",
+        //     "cmd": "pi-acp",
+        //     "env": {
+        //         "PI_PERMISSION_LEVEL": "low",
+        //     }
+        // },
+        // {
+        //     "title": "Kimi",
+        //     "cmd": "kimi",
+        //     "args": ["acp"],
+        // },
+        // {
+        //     "title": "Droid",
+        //     "cmd": "droid",
+        //     "args": ["exec", "--output-format", "acp"],
+        //     "model": "custom:OpenRouter-0"
+        // },
+        // {
+        //     "title": "Claude Code",
+        //     "cmd": "claude-agent-acp"
+        // },
+        // {
+        //     "title": "Copilot",
+        //     "cmd": "copilot",
+        //     "args": ["--acp"]
+        // },
+    ],
+    // Ignore patterns for autocompletion (besides .gitignore)
+    "ignore": {
+        "folders": [".git", ".svn", ".hg", ".venv", "node_modules"],
+        "extensions": [".pyc", ".pyo", ".pyd", ".so", ".dll", ".exe", ".o", ".a", ".lib", ".class"],
+    },
+    // Custom quick actions shown in the prompt panel
+    "actions": [
+        {
+            "title": "Explain",
+            "prompt": "Explain in simple terms"
+        },
+        {
+            "title": "Summarize",
+            "prompt": "Summarize with key points"
+        },
+    ],
+    "system_prompt": null,  // Custom system prompt for the agent (if any)
+
+    // Automatically attach the current selection as context (@path:line-line or a code block)
+    "attach_selection": false,
+
+    // How agent thought chunks (thinking...) are surfaced:
+    //   "enabled"  - thoughts render in the output view as blockquotes (default)
+    //   "console"  - thoughts go to the Sublime console (stderr); view shows the reply only
+    //   "disabled" - thoughts are dropped; view shows the reply only
+    "thoughts": "enabled",
+
+    // Seconds of inactivity before auto-terminating the daemon (0 = disabled)
+    "daemon_idle_timeout": 900,
+
+    // Idle timeout in seconds: how long to wait for the agent to produce any
+    // output (streamed text, thought chunks, tool calls, file edits) before the
+    // turn is timed out and cancelled. The clock resets on any agent activity,
+    // so long-running multi-edit turns won't time out while the agent is working.
+    "timeout": 600,
+
+    // Seconds before @-file completions and agent-info caches expire (0 = always refresh)
+    "cache_ttl": 300,
+
+    // Permission control for agent tool calls (session/request_permission) and host-fs operations
+    // auto_allow: glob patterns for tool call kinds to auto-approve (e.g., "read*")
+    // auto_reject: glob patterns for tool call kinds to auto-reject (takes priority over auto_allow)
+    // fs/read_text_file maps to kind "read_file"; fs/write_text_file maps to kind "write_file"
+    // Default: reads (incl. host-fs reads) are auto-allowed; writes (incl. host-fs writes)
+    // prompt in daemon mode and are denied in one-shot/CLI mode unless matched by auto_allow
+    "permissions": {
+        "auto_allow": ["read*"],
+        "auto_reject": []
+    },
+
+    // Enable debug logging to the Sublime console (via stderr).
+    "debug": false,
+}
