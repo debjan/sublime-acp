@@ -13,14 +13,14 @@ There are two ways to talk to an agent, and they coexist:
 
 ## Session 1 - a quick one-shot prompt
 
-1. **Open the prompt.** Select Command Palette → *ACP: Prompt*. With several agents configured, a quick panel asks which one; with a single agent it is picked automatically.
+1. **Open the prompt.** Select Command Palette -> *ACP: Prompt*. With several agents configured, a quick panel asks which one; with a single agent it is picked automatically.
 2. **Type your prompt.** The input panel gives you two autocompletes (see completions.md):
 
-- `@` - file and folder paths in your project, filtered by your `.gitignore` and the `ignore` setting;
-- `/` - the agent's own slash commands, read from the agent during initialization.
+   - `@` - file and folder paths in your project, filtered by your `.gitignore` and the `ignore` setting;
+   - `/` - the agent's own slash commands, read from the agent during initialization.
 
-1. **Press Enter.** A new scratch tab named \*ACP Prompt: \*opens and the response streams in as it is produced. Agent thinking chunks appear according to the `thoughts` setting (blockquotes in the tab, console-only, or dropped).
-2. **The session ends.** When the reply finishes the agent subprocess is torn down. Nothing is remembered for the next prompt.
+3. **Press Enter.** A new scratch tab named *ACP Prompt:* opens and the response streams in as it is produced. Agent thinking chunks appear according to the `thoughts` setting (blockquotes in the tab, console-only, or dropped).
+4. **The session ends.** When the reply finishes the agent subprocess is torn down. Nothing is remembered for the next prompt.
 
 One-shot mode is deliberately read-only: agents are told to **never edit files** and to return diffs with `file:line` annotations instead. If the agent tries a filesystem write through ACP's `fs/writeTextFile` endpoint anyway, it is **denied** (no UI exists to approve it) unless you have an `auto_allow` rule for it.
 
@@ -28,8 +28,8 @@ One-shot mode is deliberately read-only: agents are told to **never edit files**
 
 When you are going to iterate - "make this change, then fix the tests, then show me the diff" - a one-shot process can't keep up. Start a daemon instead.
 
-1. **Start the session.** *ACP: Start Agent Session*, pick the agent. A spinner shows while the agent initializes: handshake → authentication → session creation (or resume).
-2. **Chat tab appears.** A dedicated \*ACP Chat: \*tab opens in a split, and the input panel returns so you can keep typing.
+1. **Start the session.** *ACP: Start Agent Session*, pick the agent. A spinner shows while the agent initializes: handshake -> authentication -> session creation (or resume).
+2. **Chat tab appears.** A dedicated *ACP Chat:* tab opens in a split, and the input panel returns so you can keep typing.
 3. **Chat as long as you like.** Each prompt is appended to the same tab; the agent keeps full context - files it read, edits it made, everything you discussed. `@` and `/` completions still work in the input panel.
 4. **Approve tool use when asked.** If the agent requests a permission (e.g. a file write) that matches neither `auto_allow` nor `auto_reject`, a quick panel opens **in the window that owns the daemon** with the options the agent offered. Pick one and the turn continues; press Esc to cancel. The idle timer never shuts the daemon down while such a prompt is open (see permissions.md).
 5. **Switch model or mode mid-session.** With *ACP: Switch Model* / *ACP: Switch Mode* a quick panel lists the options the agent advertises (Opencode, Pi, Claude Code, Droid expose model switching; Opencode and Claude Code also expose modes like `build`/`plan`). The current value is marked with ✓; focus returns to the input panel after you choose.
@@ -75,44 +75,21 @@ sequenceDiagram
     deactivate DAEMON
 ```
 
-## From the terminal - the CLI
-
-Everything above also works headless with `cli/rpc.py` (no Sublime Text needed), which is handy for scripts and quick follow-ups:
-
-```bash
-# One-shot prompt
-python cli/rpc.py claude-agent-acp -- "Explain this code"
-
-# List capabilities / slash commands / config options
-python cli/rpc.py -lc claude-agent-acp
-python cli/rpc.py -ls claude-agent-acp
-python cli/rpc.py -lo claude-agent-acp
-
-# Continue a session from its ID
-python cli/rpc.py -c <session_id> claude-agent-acp -- "Follow up"
-
-# Custom system prompt or model
-python cli/rpc.py -s "You are terse." -m claude-sonnet-4 claude-agent-acp -- "hi"
-```
-
-The CLI prints a "Follow up with…" hint after each successful run so you can chain prompts across terminal sessions.
-
 ## What's possible - feature map
 
-| You want to…                               | How                                                                                    |
-| ------------------------------------------ | -------------------------------------------------------------------------------------- |
-| Ask a single question                      | `Alt+Shift+A`, one-shot prompt                                                         |
-| Iterate on a change                        | `Ctrl+Alt+A`, daemon chat session                                                      |
-| Explain / summarize selected code          | select text → palette → *ACP: Actions* (from the `actions` setting)                    |
-| Reference a file in the prompt             | type `@` in the input panel and pick from the walked project                           |
-| Trigger an agent slash command             | type `/` in the input panel                                                            |
-| Attach the current selection automatically | set `attach_selection: true` - appends `@path:line-line` (or the text) to every prompt |
-| Change the model mid-session               | *ACP: Switch Model* (if the agent advertises the option)                               |
-| Switch session mode (build/plan)           | *ACP: Switch Mode* (if the agent advertises the option)                                |
-| Cancel a runaway turn                      | `Ctrl+Break` - interrupt without killing the session                                   |
-| Reuse yesterday's context                  | *ACP: Continue Last Session*                                                           |
-| Automate prompts                           | `cli/rpc.py` from scripts, `-c` to continue sessions                                   |
-| Let writes through automatically           | add the tool kind to `permissions.auto_allow` (e.g. `"write*"`) - see permissions.md   |
+| You want to…                               | How                                                                                                    |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------------ |
+| Ask a single question                      | `Alt+Shift+A`, one-shot prompt                                                                         |
+| Iterate on a change                        | `Ctrl+Alt+A`, daemon chat session                                                                      |
+| Explain / summarize selected code          | select text -> palette -> *ACP: Actions* (from the `actions` setting)                                  |
+| Reference a file in the prompt             | type `@` in the input panel and pick from the walked project                                           |
+| Trigger an agent slash command             | type `/` in the input panel                                                                            |
+| Attach the current selection automatically | set `attach_selection: true` - appends `@path:line-line` (or the text) to every prompt                 |
+| Change the model mid-session               | *ACP: Switch Model* (if the agent advertises the option)                                               |
+| Switch session mode (build/plan)           | *ACP: Switch Mode* (if the agent advertises the option)                                                |
+| Cancel a runaway turn                      | `Ctrl+Break` - interrupt without killing the session                                                   |
+| Reuse yesterday's context                  | *ACP: Continue Last Session*                                                                           |
+| Let writes through automatically           | add the tool kind to `permissions.auto_allow` (e.g. `"write*"`) - see [permissions.md](permissions.md) |
 
 ## Tips & tricks
 
@@ -132,7 +109,6 @@ The CLI prints a "Follow up with…" hint after each successful run so you can c
 | `modules/permissions.py` | auto-allow/reject and the permission quick panel                               |
 | `modules/completions.py` | `@`/`/` completions in the input panel                                         |
 | `modules/cache.py`       | last session ID per agent (powers *Continue Last Session*)                     |
-| `cli/rpc.py`             | the standalone CLI                                                             |
 
 ## Related docs
 

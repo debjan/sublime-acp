@@ -29,14 +29,16 @@ flowchart TD
 
 ## Key behaviors
 
-- **No timeout** - an open permission prompt stays open until you respond or the daemon is stopped/reset (`dismiss_permission_prompt()` cancels it).
+- **Queued per window** - prompts are serialized behind a per-window `asyncio.Lock`; back-to-back requests each get their own panel instead of colliding (Sublime allows only one quick panel per window).
+- **Hard timeout** - an open prompt is denied after `permission_prompt_timeout` seconds (default 300; `0` = wait forever). It is also cancelled by `dismiss_permission_prompt()` on daemon stop/reset.
+- **Supersede fail-safe** - if a stale waiter is ever displaced, it is resolved with a deny so the agent can never hang on an unanswered request.
 - **Async bridge** - the quick panel runs on Sublime's UI thread while the daemon's asyncio loop awaits an `asyncio.Event`; the user's choice is bridged back across threads.
 - **Idle-safe** - while a permission prompt is pending, the daemon's idle timer will not shut the session down.
 - **Host filesystem calls too** - ACP's own fs endpoints map onto kinds:
-  - `fs/read_text_file` → kind `read_file`,
-  - `fs/write_text_file` → kind `write_file`,
+  - `fs/read_text_file` -> kind `read_file`,
+  - `fs/write_text_file` -> kind `write_file`,
 so the same patterns cover both agent tools and direct host-fs access.
-- **One-shot/CLI mode** - unmatched writes are denied (no UI available); in daemon mode they prompt instead.
+- **One-shot mode** - unmatched writes are denied (no UI available); in daemon mode they prompt instead.
 
 ## File walker (project files for `@` completions)
 
@@ -45,7 +47,7 @@ Permissions also shape which files ACP itself enumerates for autocomplete:
 | File                     | Responsibility                                                        |
 | ------------------------ | --------------------------------------------------------------------- |
 | `modules/file_walker.py` | `walk_project_files()` + `ProjectFileCache` (TTL, background refresh) |
-| `modules/gitignore.py`   | `.gitignore` parsing → `GitignoreRules`                               |
+| `modules/gitignore.py`   | `.gitignore` parsing -> `GitignoreRules`                              |
 
 The walker runs `os.walk` on a background thread, skipping:
 

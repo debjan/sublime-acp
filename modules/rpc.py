@@ -33,7 +33,7 @@ _INITIALIZE_PARAMS = {
             'writeTextFile': True,
         },
     },
-    'clientInfo': {'name': 'rpc-cli', 'version': '1.0.0'},
+    'clientInfo': {'name': 'sublime-acp', 'version': '1.0.0'},
 }
 
 _FS_ALLOW_OPTION_ID = 'allow'
@@ -499,7 +499,7 @@ async def _resolve_permission_id(
     ``on_permission_prompt`` (wired by the daemon) handles interactive
     prompts; otherwise :func:`resolve_permission` is used, which cancels
     any kind that is not auto-allowed when no interactive window is
-    available (one-shot, init phase, CLI).
+    available (one-shot, init phase).
 
     Args:
         params: A ``session/request_permission``-shaped params dict.

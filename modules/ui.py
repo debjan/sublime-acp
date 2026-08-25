@@ -7,7 +7,12 @@ from typing import Any, Callable
 import sublime
 
 from . import broadcast
-from .config import STATUS_KEY_DAEMON, settings
+from .config import STATUS_KEY_DAEMON, TURN_DIVIDER, settings
+
+
+def dividers_enabled() -> bool:
+    """Return whether turn dividers are enabled (``turn_dividers`` setting)."""
+    return bool(settings().get('turn_dividers', True))
 
 
 def on_main(fn: Callable[[], Any], delay: int = 0) -> None:
@@ -199,18 +204,23 @@ def append_to_output_view(view: sublime.View, text: str) -> None:
     on_main(lambda: _append_text(view, text))
 
 
+def append_turn_divider(view: sublime.View) -> None:
+    """Append a markdown horizontal rule marking the end of an agent turn."""
+    if dividers_enabled():
+        append_to_output_view(view, TURN_DIVIDER)
+
+
 def append_prompt_turn(view: sublime.View, prompt: str,
                        source_view: sublime.View | None = None,
                        force_selection: bool = False) -> None:
-    """Append the user's prompt as a blockquote separator before the response."""
-    block = f'\n\n> **User**: {prompt}\n\n'
+    """Append the user's prompt followed by a divider before the response."""
+    divider = TURN_DIVIDER if dividers_enabled() else '\n'
+    block = f'\n> **User**: {prompt}{divider}'
     append_to_output_view(view, block)
     if source_view is not None:
-        sel_display = attach_selection_to_prompt('', source_view,
-                                                 force=force_selection)
-        if sel_display:
+        if sel_display := attach_selection_to_prompt('', source_view, force=force_selection):
             sel_display = sel_display.lstrip()
-            append_to_output_view(view, f'{sel_display}\n\n---\n\n')
+            append_to_output_view(view, f'{sel_display}\n{divider}')
 
 
 def reopen_daemon_input_panel(cmd, model, timeout, system_prompt, session_id, agent_name, daemon_window=None, env=None, auth=None):

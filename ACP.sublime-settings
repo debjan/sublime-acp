@@ -71,6 +71,9 @@
     // Automatically attach the current selection as context (@path:line-line or a code block)
     "attach_selection": false,
 
+    // Append markdown dividers (---) after each user prompt and agent reply
+    "turn_dividers": true,
+
     // How agent thought chunks (thinking...) are surfaced:
     //   "enabled"  - thoughts render in the output view as blockquotes (default)
     //   "console"  - thoughts go to the Sublime console (stderr); view shows the reply only
@@ -86,6 +89,11 @@
     // so long-running multi-edit turns won't time out while the agent is working.
     "timeout": 600,
 
+    // Hard cap in seconds for an open permission prompt: after this the prompt
+    // is denied and the turn continues (0 = wait forever). Prompts are queued
+    // per window, so back-to-back requests each get their own panel.
+    "permission_prompt_timeout": 300,
+
     // Seconds before @-file completions and agent-info caches expire (0 = always refresh)
     "cache_ttl": 300,
 
@@ -94,7 +102,7 @@
     // auto_reject: glob patterns for tool call kinds to auto-reject (takes priority over auto_allow)
     // fs/read_text_file maps to kind "read_file"; fs/write_text_file maps to kind "write_file"
     // Default: reads (incl. host-fs reads) are auto-allowed; writes (incl. host-fs writes)
-    // prompt in daemon mode and are denied in one-shot/CLI mode unless matched by auto_allow
+    // prompt in daemon mode and are denied in one-shot mode unless matched by auto_allow
     "permissions": {
         "auto_allow": ["read*"],
         "auto_reject": []

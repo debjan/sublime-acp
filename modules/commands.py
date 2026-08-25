@@ -597,7 +597,7 @@ class _AcpSwitchConfigOptionCommand(sublime_plugin.WindowCommand):
                 )
                 sublime.set_timeout(
                     lambda v=confirmed: broadcast.set_broadcast_status(
-                        STATUS_KEY_NOTIFY, f'ACP: {label} → {v}'
+                        STATUS_KEY_NOTIFY, f'ACP: {label} -> {v}'
                     ), 0
                 )
                 sublime.set_timeout(
@@ -669,4 +669,4 @@ class AcpInterruptCommand(sublime_plugin.WindowCommand):
             except RuntimeError:
                 sublime.status_message('ACP: daemon already stopped')
         if output_view := state.get('output_view'):
-            ui.append_to_output_view(output_view, '\n\n*[Interrupted]*\n')
+            ui.append_to_output_view(output_view, '\n*[Interrupted]*\n')

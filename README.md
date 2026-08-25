@@ -18,14 +18,14 @@ git clone https://github.com/debjan/sublime-acp ACP
 
 ### One-shot prompt
 
-1. `Ctrl+Shift+P` → **"ACP: Prompt"**
+1. `Ctrl+Shift+P` -> **"ACP: Prompt"**
 2. Pick an agent from the quick panel (skipped if only one is configured)
 3. Type your prompt in the input panel - use `@` for file autocompletion, `/` for agent slash commands
 4. Press Enter - the response streams into a new tab or output panel
 
 ### Persistent chat session (daemon)
 
-1. `Ctrl+Shift+P` → **"ACP: Start Agent Session"**
+1. `Ctrl+Shift+P` -> **"ACP: Start Agent Session"**
 2. Pick an agent - a spinner shows while the agent initializes
 3. Once ready, a dedicated **"ACP Chat: Agent Name"** tab opens
 4. Send prompts via **"ACP: Prompt"** - responses accumulate in the chat tab
@@ -35,7 +35,7 @@ The daemon auto-terminates after 15 minutes of inactivity (configurable).
 
 ### Continue a previous session
 
-- `Ctrl+Shift+P` → **"ACP: Continue Last Session"** - reconnects to your last session
+- `Ctrl+Shift+P` -> **"ACP: Continue Last Session"** - reconnects to your last session
 
 ### Walkthrough
 
@@ -43,7 +43,7 @@ For quick walkthrough visit [walkthrough.md](docs/walkthrough.md)
 
 ## Configuration
 
-Edit `ACP.sublime-settings` (Preferences → Package Settings → ACP):
+Edit `ACP.sublime-settings` (Preferences -> Package Settings -> ACP):
 
 ```jsonc
 {
@@ -80,25 +80,7 @@ Edit `ACP.sublime-settings` (Preferences → Package Settings → ACP):
 
 ### Switching model or mode
 
-While a daemon session is active, **ACP: Switch Model** and **ACP: Switch Mode** show a quick panel populated from the agent's advertised `config_options`. The current selection is marked with `→`. These commands are only enabled when the active agent supports the corresponding option - agents like Opencode, Pi, Claude Code, and Droid expose model switching; Opencode and Claude Code also expose mode switching (e.g. `build` / `plan`).
-
-## Standalone CLI
-
-`cli/rpc.py` works independently of Sublime Text:
-
-```bash
-# One-shot prompt
-python cli/rpc.py claude-agent-acp -- "Explain this code"
-
-# List agent capabilities
-python cli/rpc.py -lc claude-agent-acp
-
-# List slash commands
-python cli/rpc.py -ls claude-agent-acp
-
-# Continue a session
-python cli/rpc.py -c <session_id> claude-agent-acp -- "Follow up"
-```
+While a daemon session is active, **ACP: Switch Model** and **ACP: Switch Mode** show a quick panel populated from the agent's advertised `config_options`. The current selection is marked with `✓`. These commands are only enabled when the active agent supports the corresponding option - agents like Opencode, Pi, Claude Code, and Droid expose model switching; Opencode and Claude Code also expose mode switching (e.g. `build` / `plan`).
 
 ## Requirements
 

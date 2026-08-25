@@ -31,7 +31,9 @@ from .config import (
     DEFAULT_PERMISSIONS,
     IDLE_TIMEOUT_DEFAULT,
     IDLE_TIMER_INTERVAL,
+    PERMISSION_PROMPT_TIMEOUT,
     STATUS_KEY_DAEMON,
+    TURN_DIVIDER,
 )
 from .config import settings as load_settings
 from .permissions import dismiss_permission_prompt, resolve_permission
@@ -357,7 +359,7 @@ def _run_acp_worker(
     try:
         thread.start()
     except Exception as exc:
-        on_chunk(f'\n\n**[Agent Error]:** `could not start worker thread: {exc}`\n')
+        on_chunk(f'\n**[Agent Error]:** `could not start worker thread: {exc}`\n')
         _on_done()
         return
 
@@ -418,20 +420,20 @@ def _worker_thread(
         if status == STATUS_ERROR or result_session_id is None:
             if session_id:
                 on_chunk(
-                    '\n\n**[Could not resume previous session, see console]**\n\n'
+                    '\n**[Could not resume previous session, see console]**\n'
                 )
                 _clear_agent_session_id(cmd)
             else:
                 on_chunk(
-                    '\n\n**[Could not start session, see console]**\n\n'
+                    '\n**[Could not start session, see console]**\n'
                 )
         else:
             if session_id and status in (STATUS_RESUMED, STATUS_LOADED):
-                on_chunk('\n\n*[Resumed previous session]*\n\n')
+                on_chunk(f'\n*[Resumed session: {session_id}]*\n\n')
             elif session_id and status == STATUS_NEW:
                 if session_error:
-                    on_chunk(f'\n\n**[{session_error}]**\n')
-                on_chunk('\n\n**[Starting new session]**\n\n')
+                    on_chunk(f'\n**[{session_error}]**\n\n')
+                on_chunk('\n**[Started new session]**\n\n')
             _update_agent_session_id(cmd, result_session_id)
 
     loop = asyncio.new_event_loop()
@@ -440,8 +442,10 @@ def _worker_thread(
     try:
         loop.run_until_complete(async_wrapper())
     except Exception as exc:
-        on_chunk(f'\n\n**[Agent Error]:** `{exc}`\n')
+        on_chunk(f'\n**[Agent Error]:** `{exc}`\n')
     finally:
+        if ui.dividers_enabled():
+            on_chunk(TURN_DIVIDER)
         _safe_shutdown_loop(loop)
 
 # Idle timer
@@ -679,11 +683,11 @@ def _daemon_thread_main(
             session_error = init_result.get('session_error')
             if session_id:
                 if opened_via in (STATUS_RESUMED, STATUS_LOADED):
-                    msg = f'\n*[Resumed session: {sid}]*\n'
+                    msg = f'\n*[Resumed session: {sid}]*\n\n'
                 elif session_error:
-                    msg = f'\n**[{session_error}]**\n\n*[Started new session]*\n'
+                    msg = f'\n**[{session_error}]**\n*[Started new session]*\n\n'
                 else:
-                    msg = '\n*[Started new session]*\n'
+                    msg = '\n*[Started new session]*\n\n'
                 ui.on_main(
                     lambda v=output_view, m=msg: ui.append_to_output_view(v, m),
                 )
@@ -715,6 +719,10 @@ def _daemon_thread_main(
                     try:
                         return await resolve_permission(
                             params, permissions_config, window_id, loop=loop,
+                            timeout=settings.get(
+                                'permission_prompt_timeout',
+                                PERMISSION_PROMPT_TIMEOUT,
+                            ),
                         )
                     finally:
                         state.set(permission_pending=False)
@@ -736,6 +744,7 @@ def _daemon_thread_main(
 
                 acp_log('daemon_session', 'prompt completed')
                 async_queue.task_done()
+                ui.append_turn_divider(output_view)
                 state.set(
                     is_busy=False, last_activity=time.monotonic(),
                 )
@@ -771,7 +780,7 @@ def _daemon_thread_main(
         def _show_error():
             ui.append_to_output_view(
                 output_view,
-                f'\n\n**[Agent Error]:** `{error_msg}`\n',
+                f'\n**[Agent Error]:** `{error_msg}`\n',
             )
         ui.on_main(_show_error)
     finally:

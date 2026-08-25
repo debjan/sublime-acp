@@ -1,6 +1,6 @@
 # Configuration
 
-ACP is configured through `ACP.sublime-settings` (**Preferences → Package Settings → ACP → Settings**). All settings are optional - sensible defaults come from `modules/config.py`.
+ACP is configured through `ACP.sublime-settings` (**Preferences -> Package Settings -> ACP -> Settings**). All settings are optional - sensible defaults come from `modules/config.py`.
 
 ## Settings reference
 
@@ -36,7 +36,7 @@ With more than one entry, a quick panel lets you pick; a single entry is auto-se
 | `attach_selection` | `false`     | Auto-attach current selection as context (`@path:line-line`) |
 | `actions`          | (see below) | Custom quick actions shown in the prompt panel               |
 
-`actions` entries appear as ready-made prompts for selected text via the command palette → *ACP: Actions*. The selected text is always embedded in an action prompt as a fenced code block, independent of the `attach_selection` setting:
+`actions` entries appear as ready-made prompts for selected text via the command palette -> *ACP: Actions*. The selected text is always embedded in an action prompt as a fenced code block, independent of the `attach_selection` setting:
 
 ```jsonc
 "actions": [
@@ -47,11 +47,12 @@ With more than one entry, a quick panel lets you pick; a single entry is auto-se
 
 ### Timeouts
 
-| Setting               | Default | Purpose                                                                                                                                                                              |
-| --------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `daemon_idle_timeout` | `900`   | Seconds of inactivity before an idle daemon shuts down (`0` = never)                                                                                                                 |
-| `timeout`             | `600`   | Seconds to wait for *any* agent output before cancelling a turn. The clock resets on every streamed text, thought, tool call, or file edit - long multi-edit turns won't be cut off. |
-| `cache_ttl`           | `300`   | Seconds before the `@`-completions file cache expires (`0` = always refresh)                                                                                                         |
+| Setting                     | Default | Purpose                                                                                                                                                                              |
+| --------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `daemon_idle_timeout`       | `900`   | Seconds of inactivity before an idle daemon shuts down (`0` = never)                                                                                                                 |
+| `timeout`                   | `600`   | Seconds to wait for *any* agent output before cancelling a turn. The clock resets on every streamed text, thought, tool call, or file edit - long multi-edit turns won't be cut off. |
+| `permission_prompt_timeout` | `300`   | Hard cap in seconds for an open permission prompt before it is denied (`0` = wait forever). Prompts queue per window.                                                                |
+| `cache_ttl`                 | `300`   | Seconds before the `@`-completions file cache expires (`0` = always refresh)                                                                                                         |
 
 ### Thoughts
 
@@ -74,7 +75,7 @@ Controls automatic approval/rejection of agent tool calls and host-filesystem op
 }
 ```
 
-Patterns are fnmatch-style globs against tool kinds. `fs/read_text_file` maps to kind `read_file`; `fs/write_text_file` maps to kind `write_file`. Unmatched writes **prompt** in daemon mode but are **denied** in one-shot/CLI mode.
+Patterns are fnmatch-style globs against tool kinds. `fs/read_text_file` maps to kind `read_file`; `fs/write_text_file` maps to kind `write_file`. Unmatched writes **prompt** in daemon mode but are **denied** in one-shot mode.
 
 ### Autocomplete file filtering
 

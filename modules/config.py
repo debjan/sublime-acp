@@ -12,12 +12,15 @@ def settings():
 DEFAULT_TIMEOUT = 600              # agent command timeout (s)
 CACHE_TTL_DEFAULT = 300            # file-walker cache expiry (s)
 IDLE_TIMEOUT_DEFAULT = 900         # daemon idle shutdown timeout (s)
+PERMISSION_PROMPT_TIMEOUT = 300    # hard cap on interactive permission waits (s)
 IDLE_TIMER_INTERVAL = 30           # idle-timeout check interval (s)
 INPUT_VIEW_NAME = 'acp_input'      # prompt input panel view name
 SPINNER_INTERVAL_MS = 250          # spinner frame interval (ms)
 STATUS_KEY_DAEMON = 'acp_daemon'   # broadcast-status key for daemon state
 STATUS_KEY_NOTIFY = 'acp_notify'   # transient notification key (auto-cleared)
 MAX_HINT_LENGTH = 120              # max completion annotation chars (long hints break the popup)
+
+TURN_DIVIDER = '\n\n---\n\n'  # markdown divider between turns
 
 DEFAULT_PERMISSIONS = {'auto_allow': ['read*'], 'auto_reject': []}  # default auto-allow / auto-reject rules
 
