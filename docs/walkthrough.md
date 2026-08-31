@@ -1,6 +1,6 @@
 # Walkthrough - A Typical User Session
 
-This page walks through a ACP session from the user's point of view: what happens on screen at each step, what you can do, and where the limits are. It assumes ACP is installed and at least one agent is configured (see the [README](../README.md#quick-start) and configuration.md).
+This page walks through a ACP session from the user's point of view: what happens on screen at each step, what you can do, and where the limits are. It assumes ACP is installed and at least one agent is configured (see the [README](../README.md#quick-start) and [configuration.md](configuration.md)).
 
 ## At a glance
 
@@ -14,7 +14,7 @@ There are two ways to talk to an agent, and they coexist:
 ## Session 1 - a quick one-shot prompt
 
 1. **Open the prompt.** Select Command Palette -> *ACP: Prompt*. With several agents configured, a quick panel asks which one; with a single agent it is picked automatically.
-2. **Type your prompt.** The input panel gives you two autocompletes (see completions.md):
+2. **Type your prompt.** The input panel gives you two autocompletes (see [configuration.md](completions.md)):
 
    - `@` - file and folder paths in your project, filtered by your `.gitignore` and the `ignore` setting;
    - `/` - the agent's own slash commands, read from the agent during initialization.
@@ -31,7 +31,7 @@ When you are going to iterate - "make this change, then fix the tests, then show
 1. **Start the session.** *ACP: Start Agent Session*, pick the agent. A spinner shows while the agent initializes: handshake -> authentication -> session creation (or resume).
 2. **Chat tab appears.** A dedicated *ACP Chat:* tab opens in a split, and the input panel returns so you can keep typing.
 3. **Chat as long as you like.** Each prompt is appended to the same tab; the agent keeps full context - files it read, edits it made, everything you discussed. `@` and `/` completions still work in the input panel.
-4. **Approve tool use when asked.** If the agent requests a permission (e.g. a file write) that matches neither `auto_allow` nor `auto_reject`, a quick panel opens **in the window that owns the daemon** with the options the agent offered. Pick one and the turn continues; press Esc to cancel. The idle timer never shuts the daemon down while such a prompt is open (see permissions.md).
+4. **Approve tool use when asked.** If the agent requests a permission (e.g. a file write) that matches neither `auto_allow` nor `auto_reject`, a quick panel opens **in the window that owns the daemon** with the options the agent offered. Pick one and the turn continues; press Esc to cancel. The idle timer never shuts the daemon down while such a prompt is open (see [permissions.md](permissions.md)).
 5. **Switch model or mode mid-session.** With *ACP: Switch Model* / *ACP: Switch Mode* a quick panel lists the options the agent advertises (Opencode, Pi, Claude Code, Droid expose model switching; Opencode and Claude Code also expose modes like `build`/`plan`). The current value is marked with ✓; focus returns to the input panel after you choose.
 6. **Interrupt a long turn.** `Ctrl+Break` (or *ACP: Interrupt Current Prompt*) cancels the in-flight prompt while keeping the connection and session alive - no respawn, no lost context. A marker line is appended to the chat tab.
 7. **Stop, or let it idle.** *ACP: Stop Agent Session* terminates the daemon gracefully. If you simply stop typing, the daemon auto-terminates after `daemon_idle_timeout` seconds of inactivity (default 900 s; set to `0` to disable). Closing the window that owns the daemon stops it too.

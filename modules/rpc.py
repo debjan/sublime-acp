@@ -25,6 +25,17 @@ from ..protocol import (
 )
 from .permissions import resolve_permission
 
+# Result statuses returned by ``send_prompt_and_stream``. ``PROMPT_OK`` means
+# the prompt completed; the others describe why it did not, so callers can
+# react differently to a dropped session versus a transient failure.
+
+PROMPT_OK = 'ok'
+PROMPT_ERROR = 'error'
+PROMPT_SESSION_NOT_FOUND = 'session_not_found'
+PROMPT_TIMEOUT = 'timeout'
+PROMPT_CONNECTION_CLOSED = 'connection_closed'
+PROMPT_CANCELLED = 'cancelled'
+
 _INITIALIZE_PARAMS = {
     'protocolVersion': PROTOCOL_VERSION,
     'clientCapabilities': {
@@ -747,8 +758,12 @@ async def send_prompt_and_stream(
             ``available_commands_update`` notification seen while streaming.
 
     Returns:
-        ``True`` if the prompt completed, or ``False`` on ``ACPError``,
-        timeout, or connection close.
+        A status string describing the outcome of the prompt: ``PROMPT_OK``
+        when the prompt completed, ``PROMPT_SESSION_NOT_FOUND`` when the agent
+        reported the session no longer exists, ``PROMPT_TIMEOUT`` when the
+        agent went silent for ``callback_timeout``, ``PROMPT_CONNECTION_CLOSED``
+        when the agent closed the connection, ``PROMPT_CANCELLED`` when the
+        prompt was cancelled, or ``PROMPT_ERROR`` for any other ``ACPError``.
     """
     acp_log('rpc', f'send_prompt_and_stream: sid={session_id}, mode={mode}, timeout={callback_timeout}')
 
@@ -810,7 +825,9 @@ async def send_prompt_and_stream(
             else:
                 sys.stdout.write(f'**[Agent error]:** {exc}\n')
                 sys.stdout.flush()
-            return False
+            if 'session not found' in exc.message.lower():
+                return PROMPT_SESSION_NOT_FOUND
+            return PROMPT_ERROR
         except asyncio.TimeoutError:
             acp_log('rpc', f'send_prompt_and_stream: timeout after {callback_timeout}s of inactivity')
             if callback:
@@ -818,13 +835,13 @@ async def send_prompt_and_stream(
             with contextlib.suppress(Exception):
                 await conn.send_notification('session/cancel', {'sessionId': session_id})
                 await conn.send_notification('$/cancel_request', {'requestId': conn.last_request_id})
-            return False
+            return PROMPT_TIMEOUT
         except ConnectionError as exc:
             acp_log('rpc', f'send_prompt_and_stream: agent closed connection: {exc}')
-            return False
+            return PROMPT_CONNECTION_CLOSED
         except asyncio.CancelledError:
             acp_log('rpc', 'send_prompt_and_stream: prompt cancelled')
-            return False
+            return PROMPT_CANCELLED
 
     flushed = ''
     if thoughts_mode == 'enabled':
@@ -849,7 +866,7 @@ async def send_prompt_and_stream(
             sys.stdout.flush()
 
     acp_log('rpc', 'send_prompt_and_stream: done')
-    return True
+    return PROMPT_OK
 
 
 async def acp(

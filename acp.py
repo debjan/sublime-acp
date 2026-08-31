@@ -1,4 +1,4 @@
-"""ACP Sublime Text plugin — thin facade."""
+"""ACP Sublime Text plugin - thin facade."""
 
 import os
 

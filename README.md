@@ -21,7 +21,7 @@ git clone https://github.com/debjan/sublime-acp ACP
 1. `Ctrl+Shift+P` -> **"ACP: Prompt"**
 2. Pick an agent from the quick panel (skipped if only one is configured)
 3. Type your prompt in the input panel - use `@` for file autocompletion, `/` for agent slash commands
-4. Press Enter - the response streams into a new tab or output panel
+4. Press Enter - the response streams into a new tab
 
 ### Persistent chat session (daemon)
 

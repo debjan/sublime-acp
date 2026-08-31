@@ -12,7 +12,7 @@ import threading
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 import sublime
 
@@ -38,6 +38,9 @@ from .config import (
 from .config import settings as load_settings
 from .permissions import dismiss_permission_prompt, resolve_permission
 from .rpc import (
+    PROMPT_CONNECTION_CLOSED,
+    PROMPT_OK,
+    PROMPT_SESSION_NOT_FOUND,
     _extract_available_commands,
     acp,
     send_prompt_and_stream,
@@ -605,6 +608,67 @@ def execute_prompt(
 
 # Daemon thread
 
+async def _reconnect_daemon_session(
+    cmd: list,
+    env: dict,
+    model: str | None,
+    session_id: str | None,
+    work_dir: str,
+    output_view,
+    permissions_config: dict | None,
+    auth: bool | None,
+    old_conn,
+    old_proc,
+) -> tuple[Any, Any, str | None]:
+    """Resolve a daemon session whose live process dropped it.
+
+    Closes the stale subprocess/connection and spawns a fresh process,
+    attempting to resume *session_id* (which stays cached for later
+    ``Continue session`` use). Falls back to a new session if the resume
+    fails even on a fresh process.
+
+    Returns ``(proc, conn, session_id)`` on success, or ``(None, None, None)``
+    when no session could be established (the daemon should then stop).
+    """
+    def _note(msg: str) -> None:
+        ui.on_main(lambda m=msg: ui.append_to_output_view(output_view, m))
+
+    _note('\n*[Agent session was dropped; reconnecting to resume it]*\n')
+    if old_conn is not None:
+        await old_conn.close()
+    if old_proc is not None:
+        await cleanup_process(old_proc, old_conn.writer if old_conn is not None else None)
+
+    result = await spawn_and_init(
+        cmd, env, model, session_id, work_dir,
+        permissions_config=permissions_config,
+        auth=auth,
+    )
+    if result is None and session_id:
+        acp_log('daemon_session', 'resume failed on a fresh process; falling back to a new session')
+        _clear_agent_session_id(cmd)
+        result = await spawn_and_init(
+            cmd, env, model, None, work_dir,
+            permissions_config=permissions_config,
+            auth=auth,
+        )
+    if result is None:
+        return None, None, None
+
+    proc, conn, init_result = result
+    new_sid = init_result.get('session_id')
+    opened_via = init_result.get('opened_via', STATUS_NEW)
+    _cache_daemon_agent_info(cmd, init_result)
+    _install_notification_handler(conn, cmd)
+    if opened_via in (STATUS_RESUMED, STATUS_LOADED):
+        _note(f'*[Resumed session: {new_sid}]*\n')
+    else:
+        if new_sid:
+            _update_agent_session_id(cmd, new_sid)
+        _note('*[Started a new session]*\n')
+    return proc, conn, new_sid
+
+
 def _daemon_thread_main(
     window_id: int,
     cmd: list,
@@ -738,8 +802,17 @@ def _daemon_thread_main(
                     thoughts_mode=settings.get('thoughts', 'enabled'),
                     on_commands=_make_commands_updater(cmd),
                 )
-                if not ok:
+                if ok != PROMPT_OK:
                     dismiss_permission_prompt(window_id)
+                    if ok in (PROMPT_SESSION_NOT_FOUND, PROMPT_CONNECTION_CLOSED):
+                        proc, conn, sid = await _reconnect_daemon_session(
+                            cmd, current_env, model, sid, work_dir,
+                            output_view, permissions_config, auth, conn, proc,
+                        )
+                        if conn is None or sid is None:
+                            acp_log('daemon_session', 'session recovery failed - stopping daemon')
+                            break
+                        state.set(proc=proc, conn=conn, session_id=sid)
                 first_prompt = False
 
                 acp_log('daemon_session', 'prompt completed')
