@@ -50,7 +50,7 @@ def walk_project_files(folders, all_ignored_dirs, all_ignored_ext):
                 rel_path = os.path.relpath(full_path, folder)
                 norm_rel = gitignore.norm_path(rel_path)
                 if not is_file_ignored(f, norm_rel, all_ignored_ext, rules):
-                    project_files.append(rel_path)
+                    project_files.append(norm_rel)
     return project_files
 
 

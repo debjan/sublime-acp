@@ -30,9 +30,22 @@ def _find_trigger_and_prefix(view, pt, prefix):
     pos = start
     while pos > 0:
         ch = view.substr(sublime.Region(pos - 1, pos))
-        if ch in ('/', '@'):
-            return (ch, view.substr(sublime.Region(pos, pt)))
+        if ch == '@':
+            return ('@', view.substr(sublime.Region(pos, pt)))
+        if ch in ('/', '\\'):
+            pos -= 1
+            continue
         if ch in (' ', '\t', '\n', '\r'):
+            break
+        pos -= 1
+
+    # Re-scan for '/' at word boundary
+    pos = start
+    while pos > 0:
+        ch = view.substr(sublime.Region(pos - 1, pos))
+        if ch == '/':
+            return ('/', view.substr(sublime.Region(pos, pt)))
+        if ch in (' ', '\t', '\n', '\r', '@', '\\'):
             break
         pos -= 1
 
@@ -40,11 +53,25 @@ def _find_trigger_and_prefix(view, pt, prefix):
 
 
 def _build_completions(project_files, prefix):
-    """Filter *project_files* by *prefix* and return a completions tuple."""
-    if not prefix:
-        return [(f'{f}\tfile', f) for f in project_files]
-    partial_lower = prefix.lower()
-    return [(f'{f}\tfile', f) for f in project_files if partial_lower in f.lower()]
+    """Filter *project_files* by *prefix* and return ``CompletionItem`` list."""
+    if prefix:
+        partial_lower = prefix.replace('\\', '/').lower()
+        files = [f for f in project_files if partial_lower in f.replace('\\', '/').lower()]
+    else:
+        files = project_files
+    items = []
+    for f in files:
+        try:
+            kind = sublime.KIND_NAVIGATION
+        except AttributeError:
+            kind = (0, '', '')
+        items.append(sublime.CompletionItem(
+            trigger=f,
+            annotation='file',
+            completion=f,
+            kind=kind,
+        ))
+    return items
 
 
 def complete_slash_commands(view, prefix):
