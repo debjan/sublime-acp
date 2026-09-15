@@ -18,6 +18,7 @@ INPUT_VIEW_NAME = 'acp_input'      # prompt input panel view name
 SPINNER_INTERVAL_MS = 250          # spinner frame interval (ms)
 STATUS_KEY_DAEMON = 'acp_daemon'   # broadcast-status key for daemon state
 STATUS_KEY_NOTIFY = 'acp_notify'   # transient notification key (auto-cleared)
+STATUS_KEY_USAGE = 'acp_usage'     # broadcast-status key for context usage
 MAX_HINT_LENGTH = 120              # max completion annotation chars (long hints break the popup)
 
 TURN_DIVIDER = '\n\n---\n\n'  # markdown divider between turns

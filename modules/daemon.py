@@ -4,6 +4,7 @@ Manages per-window daemon state (``DaemonState``), launches one-shot ACP
 workers or persistent session daemon threads, handles idle-timeout cleanup,
 and provides prompt enqueue/dequeue for interactive sessions.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -33,6 +34,7 @@ from .config import (
     IDLE_TIMER_INTERVAL,
     PERMISSION_PROMPT_TIMEOUT,
     STATUS_KEY_DAEMON,
+    STATUS_KEY_USAGE,
     TURN_DIVIDER,
 )
 from .config import settings as load_settings
@@ -42,6 +44,7 @@ from .rpc import (
     PROMPT_OK,
     PROMPT_SESSION_NOT_FOUND,
     _extract_available_commands,
+    _extract_usage_update,
     acp,
     send_prompt_and_stream,
     spawn_and_init,
@@ -76,6 +79,8 @@ class DaemonState:
         self.env: dict | None = None
         self.auth: bool | None = None
         self.permission_pending: bool = False
+        self.usage_used: int | None = None
+        self.usage_size: int | None = None
 
     def is_running(self) -> bool:
         with self._lock:
@@ -117,6 +122,8 @@ class DaemonState:
             self.env = None
             self.auth = None
             self.permission_pending = False
+            self.usage_used = None
+            self.usage_size = None
 
         if stop_idle_timer_func:
             stop_idle_timer_func(window_id)
@@ -135,6 +142,7 @@ class DaemonState:
         def _clear_status():
             win = output_view.window() if output_view else None
             broadcast.erase_broadcast_status(STATUS_KEY_DAEMON, win)
+            broadcast.erase_broadcast_status(STATUS_KEY_USAGE, win)
 
         ui.on_main(_clear_status)
 
@@ -221,14 +229,37 @@ def _make_commands_updater(cmd):
     return _update
 
 
-def _install_notification_handler(conn, cmd):
+def _make_usage_updater(state: DaemonState):
+    """Return an ``on_usage(used, size)`` callback updating the status bar.
+
+    Stores the latest counts in *state* (memory only) and broadcasts
+    ``ctx 27% (53k/200k)`` on ``STATUS_KEY_USAGE``. Sublime API calls are
+    dispatched to the main thread via ``ui.on_main``.
+    """
+
+    def _update(used: int, size: int) -> None:
+        state.set(usage_used=used, usage_size=size)
+        text = broadcast.usage_status_text(used, size)
+
+        def _apply():
+            output_view = state.get('output_view')
+            win = output_view.window() if output_view is not None else None
+            broadcast.set_broadcast_status(STATUS_KEY_USAGE, text, win)
+
+        ui.on_main(_apply)
+
+    return _update
+
+
+def _install_notification_handler(conn, cmd, on_usage=None):
     """Keep a persistent notification handler on the daemon connection.
 
     Persists ``available_commands_update`` payloads to the agent cache as they
     arrive, so commands are captured even when the agent announces them after
-    the init phase has returned. Other notifications are ignored here; prompt
-    streaming installs its own callbacks via ``swap_callbacks``, which
-    restores this handler afterwards.
+    the init phase has returned. Forwards ``usage_update`` payloads to
+    *on_usage*; other notifications are ignored here; prompt streaming
+    installs its own callbacks via ``swap_callbacks``, which restores this
+    handler afterwards.
     """
     update_commands = _make_commands_updater(cmd)
 
@@ -237,6 +268,11 @@ def _install_notification_handler(conn, cmd):
         if matched:
             acp_log('daemon', f'available_commands_update ({len(commands or [])} commands)')
             update_commands(commands)
+            return
+        usage_matched, used, size = _extract_usage_update(method, params)
+        if usage_matched and on_usage is not None:
+            acp_log('daemon', f'usage_update (used={used}, size={size})')
+            on_usage(used, size)
 
     conn.notification_callback = on_notification
 
@@ -619,6 +655,7 @@ async def _reconnect_daemon_session(
     auth: bool | None,
     old_conn,
     old_proc,
+    on_usage=None,
 ) -> tuple[Any, Any, str | None]:
     """Resolve a daemon session whose live process dropped it.
 
@@ -659,7 +696,7 @@ async def _reconnect_daemon_session(
     new_sid = init_result.get('session_id')
     opened_via = init_result.get('opened_via', STATUS_NEW)
     _cache_daemon_agent_info(cmd, init_result)
-    _install_notification_handler(conn, cmd)
+    _install_notification_handler(conn, cmd, on_usage)
     if opened_via in (STATUS_RESUMED, STATUS_LOADED):
         _note(f'*[Resumed session: {new_sid}]*\n')
     else:
@@ -718,6 +755,7 @@ def _daemon_thread_main(
 
     loop, async_queue = _setup_async_loop_and_queue(state)
     stream_callback = ui.make_stream_callback(state.get('output_view'), state)
+    usage_updater = _make_usage_updater(state)
 
     async def _wrapper():
         current_env = _build_env(env)
@@ -737,7 +775,7 @@ def _daemon_thread_main(
             opened_via = init_result.get('opened_via', STATUS_NEW)
             acp_log('daemon_session', f'spawn_and_init succeeded: session_id={init_result.get("session_id")}, opened_via={init_result.get("opened_via")}, proc={proc.pid if proc else None}')
             _cache_daemon_agent_info(cmd, init_result)
-            _install_notification_handler(conn, cmd)
+            _install_notification_handler(conn, cmd, usage_updater)
 
             state.set(
                 proc=proc, conn=conn,
@@ -801,6 +839,7 @@ def _daemon_thread_main(
                     on_permission_prompt=_on_permission,
                     thoughts_mode=settings.get('thoughts', 'enabled'),
                     on_commands=_make_commands_updater(cmd),
+                    on_usage=usage_updater,
                 )
                 if ok != PROMPT_OK:
                     dismiss_permission_prompt(window_id)
@@ -808,6 +847,7 @@ def _daemon_thread_main(
                         proc, conn, sid = await _reconnect_daemon_session(
                             cmd, current_env, model, sid, work_dir,
                             output_view, permissions_config, auth, conn, proc,
+                            usage_updater,
                         )
                         if conn is None or sid is None:
                             acp_log('daemon_session', 'session recovery failed - stopping daemon')

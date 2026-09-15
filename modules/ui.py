@@ -1,4 +1,5 @@
 """UI helpers - output views, status bar, input panel wiring."""
+
 from __future__ import annotations
 
 from pathlib import Path

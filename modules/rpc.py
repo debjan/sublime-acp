@@ -136,6 +136,30 @@ def _extract_available_commands(method: str, params: dict) -> tuple[bool, Any]:
     return True, update.get('availableCommands')
 
 
+def _extract_usage_update(method: str, params: dict) -> tuple[bool, int | None, int | None]:
+    """Return ``(matched, used, size)`` for a ``usage_update`` notification.
+
+    *matched* is ``True`` when the notification carries a valid
+    ``usage_update`` with non-negative ``used`` and positive ``size``
+    token counts. The optional ``cost`` field is ignored.
+    """
+    if method != 'session/update':
+        return False, None, None
+    update = params.get('update', {})
+    if not isinstance(update, dict):
+        return False, None, None
+    if update.get('sessionUpdate') != 'usage_update':
+        return False, None, None
+    used = update.get('used')
+    size = update.get('size')
+    if (
+        not isinstance(used, int) or isinstance(used, bool) or used < 0
+        or not isinstance(size, int) or isinstance(size, bool) or size <= 0
+    ):
+        return False, None, None
+    return True, used, size
+
+
 def _handle_prompt_result(msg: dict) -> list[str]:
     """Extract text content from a ``session/prompt`` result message."""
     if 'error' in msg:
@@ -719,7 +743,8 @@ async def send_prompt_and_stream(
     on_permission_prompt: Any | None = None,
     thoughts_mode: str = 'enabled',
     on_commands: Any | None = None,
-) -> bool:
+    on_usage: Any | None = None,
+) -> str:
     """Send a ``session/prompt`` and stream the response.
 
     Installs temporary notification and request callbacks on *conn* to stream
@@ -756,6 +781,9 @@ async def send_prompt_and_stream(
             ``'disabled'`` drops thoughts entirely.
         on_commands: Optional callable invoked with the command list from any
             ``available_commands_update`` notification seen while streaming.
+        on_usage: Optional callable ``on_usage(used, size)`` invoked with
+            token counts from any ``usage_update`` notification seen while
+            streaming.
 
     Returns:
         A status string describing the outcome of the prompt: ``PROMPT_OK``
@@ -779,6 +807,12 @@ async def send_prompt_and_stream(
             acp_log('rpc', f'send_prompt_and_stream: available_commands_update ({len(commands or [])} commands)')
             if on_commands:
                 on_commands(commands)
+            return
+        usage_matched, used, size = _extract_usage_update(method, params)
+        if usage_matched:
+            acp_log('rpc', f'send_prompt_and_stream: usage_update (used={used}, size={size})')
+            if on_usage:
+                on_usage(used, size)
             return
         chunks = _handle_session_update_notification({'method': method, 'params': params})
         for chunk in chunks:

@@ -14,7 +14,7 @@ There are two ways to talk to an agent, and they coexist:
 ## Session 1 - a quick one-shot prompt
 
 1. **Open the prompt.** Select Command Palette -> *ACP: Prompt*. With several agents configured, a quick panel asks which one; with a single agent it is picked automatically.
-2. **Type your prompt.** The input panel gives you two autocompletes (see [configuration.md](completions.md)):
+2. **Type your prompt.** The input panel gives you two autocompletes (see [completions.md](completions.md)):
 
    - `@` - file and folder paths in your project, filtered by your `.gitignore` and the `ignore` setting;
    - `/` - the agent's own slash commands, read from the agent during initialization.

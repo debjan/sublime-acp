@@ -38,6 +38,20 @@ def daemon_status_text(agent_name: str, agent_cmd: list | None = None) -> str:
     return f'✓ ACP: {agent_name} [{model or "default"}]'
 
 
+def _compact_tokens(value: int) -> str:
+    """Format a token count compactly, e.g. 53000 -> ``53k``."""
+    if value < 1000:
+        return str(value)
+    rounded = round(value / 1000)
+    return f'{rounded}k'
+
+
+def usage_status_text(used: int, size: int) -> str:
+    """Return the context usage status text, e.g. ``ctx 27% (53k/200k)``."""
+    pct = min(100, int(used / size * 100 + 0.5)) if size > 0 else 0
+    return f'ctx {pct}% ({_compact_tokens(used)}/{_compact_tokens(size)})'
+
+
 SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
 
 

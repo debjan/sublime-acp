@@ -15,7 +15,7 @@ from .modules.commands import (
     AcpSwitchModelCommand,
 )
 from .modules.completions import AcpFileCompletionListener
-from .modules.config import STATUS_KEY_DAEMON, settings
+from .modules.config import STATUS_KEY_DAEMON, STATUS_KEY_USAGE, settings
 from .modules.daemon import _stop_daemon, _stop_idle_timer, stop_all_daemons
 
 
@@ -39,6 +39,7 @@ def plugin_unloaded():
     try:
         from .modules.broadcast import erase_broadcast_status
         erase_broadcast_status(STATUS_KEY_DAEMON)
+        erase_broadcast_status(STATUS_KEY_USAGE)
     except Exception:
         pass
     file_walker.clear_all_caches()
