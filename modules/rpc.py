@@ -128,7 +128,7 @@ def _extract_available_commands(method: str, params: dict) -> tuple[bool, Any]:
     *matched* is ``True`` when the notification carries an
     ``available_commands_update``; the commands value may be ``None``.
     """
-    if method != 'session/update':
+    if method != 'session/update' or not isinstance(params, dict):
         return False, None
     update = params.get('update', {})
     if update.get('sessionUpdate') != 'available_commands_update':
@@ -143,7 +143,7 @@ def _extract_usage_update(method: str, params: dict) -> tuple[bool, int | None, 
     ``usage_update`` with non-negative ``used`` and positive ``size``
     token counts. The optional ``cost`` field is ignored.
     """
-    if method != 'session/update':
+    if method != 'session/update' or not isinstance(params, dict):
         return False, None, None
     update = params.get('update', {})
     if not isinstance(update, dict):

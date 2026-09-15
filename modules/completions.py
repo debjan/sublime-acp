@@ -185,9 +185,14 @@ class AcpFileCompletionListener(sublime_plugin.EventListener):
             view.set_status(STATUS_KEY_DAEMON, 'ACP: processing...')
         else:
             view.set_status(STATUS_KEY_DAEMON, broadcast.daemon_status_text(agent_name, state.get('agent_cmd')))
-        s = state.get('usage_used', 'usage_size')
-        if s['usage_used'] is not None and s['usage_size'] is not None:
-            view.set_status(STATUS_KEY_USAGE, broadcast.usage_status_text(s['usage_used'], s['usage_size']))
+        if settings().get('context_usage', True):
+            s = state.get('usage_used', 'usage_size')
+            if s['usage_used'] is not None and s['usage_size'] is not None:
+                view.set_status(STATUS_KEY_USAGE, broadcast.usage_status_text(s['usage_used'], s['usage_size']))
+            else:
+                view.erase_status(STATUS_KEY_USAGE)
+        else:
+            view.erase_status(STATUS_KEY_USAGE)
 
     def on_pre_close_window(self, window):
         """Auto-stop the daemon when the window that started it is closed."""

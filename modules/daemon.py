@@ -141,6 +141,8 @@ class DaemonState:
 
         def _clear_status():
             win = output_view.window() if output_view else None
+            if win is None and window_id is not None:
+                win = next((w for w in sublime.windows() if w.id() == window_id), None)
             broadcast.erase_broadcast_status(STATUS_KEY_DAEMON, win)
             broadcast.erase_broadcast_status(STATUS_KEY_USAGE, win)
 
@@ -244,7 +246,16 @@ def _make_usage_updater(state: DaemonState):
         def _apply():
             output_view = state.get('output_view')
             win = output_view.window() if output_view is not None else None
-            broadcast.set_broadcast_status(STATUS_KEY_USAGE, text, win)
+            if win is None:
+                win_id = state.get('window_id')
+                if win_id is not None:
+                    win = next((w for w in sublime.windows() if w.id() == win_id), None)
+            if win is None:
+                return
+            if load_settings().get('context_usage', True):
+                broadcast.set_broadcast_status(STATUS_KEY_USAGE, text, win)
+            else:
+                broadcast.erase_broadcast_status(STATUS_KEY_USAGE, win)
 
         ui.on_main(_apply)
 

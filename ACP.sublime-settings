@@ -74,6 +74,9 @@
     // Append markdown dividers (---) after each user prompt and agent reply
     "turn_dividers": true,
 
+    // Show context token usage in the status bar (e.g. ctx 27% (53k/200k))
+    "context_usage": true,
+
     // How agent thought chunks (thinking...) are surfaced:
     //   "enabled"  - thoughts render in the output view as blockquotes (default)
     //   "console"  - thoughts go to the Sublime console (stderr); view shows the reply only

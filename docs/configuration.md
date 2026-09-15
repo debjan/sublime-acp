@@ -30,11 +30,12 @@ With more than one entry, a quick panel lets you pick; a single entry is auto-se
 
 ### Prompts and context
 
-| Setting            | Default     | Purpose                                                      |
-| ------------------ | ----------- | ------------------------------------------------------------ |
-| `system_prompt`    | `null`      | Custom system prompt passed to the agent                     |
-| `attach_selection` | `false`     | Auto-attach current selection as context (`@path:line-line`) |
-| `actions`          | (see below) | Custom quick actions shown in the prompt panel               |
+| Setting            | Default     | Purpose                                                                |
+| ------------------ | ----------- | ---------------------------------------------------------------------- |
+| `system_prompt`    | `null`      | Custom system prompt passed to the agent                               |
+| `attach_selection` | `false`     | Auto-attach current selection as context (`@path:line-line`)           |
+| `context_usage`    | `true`      | Show context token usage in the status bar (e.g. `ctx 27% (53k/200k)`) |
+| `actions`          | (see below) | Custom quick actions shown in the prompt panel                         |
 
 `actions` entries appear as ready-made prompts for selected text via the command palette -> *ACP: Actions*. The selected text is always embedded in an action prompt as a fenced code block, independent of the `attach_selection` setting:
 

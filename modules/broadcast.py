@@ -39,9 +39,12 @@ def daemon_status_text(agent_name: str, agent_cmd: list | None = None) -> str:
 
 
 def _compact_tokens(value: int) -> str:
-    """Format a token count compactly, e.g. 53000 -> ``53k``."""
+    """Format a token count compactly, e.g. 53000 -> ``53k``, 1500000 -> ``1.5M``."""
     if value < 1000:
         return str(value)
+    if value >= 1_000_000:
+        val = round(value / 1_000_000, 1)
+        return f'{int(val)}M' if val.is_integer() else f'{val}M'
     rounded = round(value / 1000)
     return f'{rounded}k'
 
