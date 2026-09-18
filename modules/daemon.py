@@ -228,7 +228,8 @@ def _update_agent_session_id(cmd, session_id):
     try:
         cache.update_session_id(_cache_dir(), cmd, session_id)
     except Exception as e:
-        sublime.status_message(f'✗ Failed to update session ID: {e}')
+        msg = f'✗ Failed to update session ID: {e}'
+        ui.on_main(lambda: sublime.status_message(msg))
 
 
 def _clear_agent_session_id(cmd):
@@ -236,7 +237,8 @@ def _clear_agent_session_id(cmd):
     try:
         cache.clear_session_id(_cache_dir(), cmd)
     except Exception as e:
-        sublime.status_message(f'✗ Failed to clear session ID: {e}')
+        msg = f'✗ Failed to clear session ID: {e}'
+        ui.on_main(lambda: sublime.status_message(msg))
 
 
 def _make_commands_updater(cmd):

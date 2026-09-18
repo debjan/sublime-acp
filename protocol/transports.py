@@ -145,8 +145,11 @@ def signal_process_group(pid: int, kill: bool = True) -> None:
         if kill:
             args.insert(1, '/F')
         creationflags = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startupinfo.wShowWindow = subprocess.SW_HIDE
         with contextlib.suppress(Exception):
-            subprocess.run(args, capture_output=True, check=False, creationflags=creationflags, timeout=5)
+            subprocess.run(args, capture_output=True, check=False, creationflags=creationflags, startupinfo=startupinfo, timeout=5)
         return
     try:
         pgid = os.getpgid(pid)
