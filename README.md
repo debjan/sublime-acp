@@ -64,7 +64,7 @@ Edit `ACP.sublime-settings` (Preferences -> Package Settings -> ACP -> Settings)
 }
 ```
 
-**Note:** To enable keyboard shortcut open "Preferences -> Package Settings -> ACP -> Example Key Bindings".
+For available options see [configuration.md](docs/configuration.md).
 
 ## Commands
 
@@ -79,9 +79,11 @@ Edit `ACP.sublime-settings` (Preferences -> Package Settings -> ACP -> Settings)
 | ACP: Switch Mode              | -                  | Change session mode mid-session (daemon only)          |
 | ACP: Switch Thought Level     | -                  | Change reasoning effort mid-session (daemon only)      |
 
+To enable keyboard shortcut open "Preferences -> Package Settings -> ACP -> Example Key Bindings".
+
 ### Switching model, mode, or thought level
 
-While a daemon session is active, **ACP: Switch Model**, **ACP: Switch Mode**, and **ACP: Switch Thought Level** show a quick panel populated from the agent's advertised `config_options`. The current selection is marked with `✓`. These commands are only enabled when the active agent supports the corresponding option - agents like Opencode, Pi, Claude Code, and Droid expose model switching; Opencode and Claude Code also expose mode switching (e.g. `build` / `plan`); Opencode, Pi, Droid, Claude Code, and Kimi expose thought-level switching.
+While a daemon session is active, **ACP: Switch Model**, **ACP: Switch Mode**, and **ACP: Switch Thought Level** show a quick panel populated from the agent's advertised options. The current selection is marked with `✓`. These commands are only enabled when the active agent supports the corresponding option.
 
 ## Requirements
 
