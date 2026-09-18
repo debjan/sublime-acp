@@ -43,7 +43,7 @@ For quick walkthrough visit [walkthrough.md](docs/walkthrough.md)
 
 ## Configuration
 
-Edit `ACP.sublime-settings` (Preferences -> Package Settings -> ACP):
+Edit `ACP.sublime-settings` (Preferences -> Package Settings -> ACP -> Settings):
 
 ```jsonc
 {
@@ -59,12 +59,12 @@ Edit `ACP.sublime-settings` (Preferences -> Package Settings -> ACP):
     { "title": "Summarize", "prompt": "Summarize with key points" },
   ],
 
-  // Custom system prompt (null = use built-in defaults)
-  "system_prompt": null,
+// ...
+
 }
 ```
 
-**Note:** To enable keyboard shortcut open "Preferences: ACP Key Bindings" from Command Palette.
+**Note:** To enable keyboard shortcut open "Preferences -> Package Settings -> ACP -> Example Key Bindings".
 
 ## Commands
 
@@ -86,7 +86,7 @@ While a daemon session is active, **ACP: Switch Model**, **ACP: Switch Mode**, a
 ## Requirements
 
 - Sublime Text 4+
-- One or more ACP-compatible agents installed on your PATH
+- One or more ACP-compatible agents installed
 
 ## Documentation
 
