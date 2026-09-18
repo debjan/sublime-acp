@@ -537,7 +537,6 @@ class AcpContinueSessionCommand(sublime_plugin.WindowCommand):
 
     def _on_fetched(self, cmd_item, cmd, sessions, supported):
         self._listing_sessions = False
-        sublime.erase_status_message()
         if sessions is None or not supported:
             agents = _load_agents()
             session_id = agents.get(cmd[0], {}).get('last_session_id')
