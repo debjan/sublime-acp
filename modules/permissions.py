@@ -49,6 +49,19 @@ def _resolve_auto_permission(
     return ('prompt', None)
 
 
+_TRUNCATE_MAX_CHARS = 160
+
+
+def _truncate_middle(text: str, max_chars: int = _TRUNCATE_MAX_CHARS) -> str:
+    """Shorten long text to fit the quick panel, keeping head and tail."""
+    text = ' '.join(str(text).split())
+    if len(text) <= max_chars:
+        return text
+    keep = max_chars - 1
+    head = keep * 2 // 3
+    return text[:head] + '…' + text[len(text) - (keep - head):]
+
+
 def _show_permission_prompt(params: dict, on_done: Callable, window_id: int) -> None:
     """Show a quick panel with permission options."""
     if window_id not in [w.id() for w in sublime.windows()]:
@@ -58,19 +71,21 @@ def _show_permission_prompt(params: dict, on_done: Callable, window_id: int) -> 
 
     tool_call = params.get('toolCall', {})
     title = tool_call.get('title', 'Unknown operation')
+    kind = tool_call.get('kind', '')
     options = params.get('options', [])
 
     if not options:
         on_done(None)
         return
 
-    labels = [
+    short_title = _truncate_middle(title)
+    names = [
         o.get('name', o.get('optionId'))
         for o in options
     ]
     option_ids = [o.get('optionId') for o in options]
 
-    acp_log('permissions', f'showing quick panel: title={title!r}, options={labels}')
+    acp_log('permissions', f'showing quick panel: title={title!r}, options={names}')
 
     def _on_done(index: int) -> None:
         if index == -1:
@@ -83,9 +98,18 @@ def _show_permission_prompt(params: dict, on_done: Callable, window_id: int) -> 
     with contextlib.suppress(Exception):
         window.bring_to_front()
 
+    quick_panel_item = getattr(sublime, 'QuickPanelItem', None)
+    if quick_panel_item is not None:
+        items = [
+            quick_panel_item(name, details=short_title, annotation=str(kind))
+            for name in names
+        ]
+    else:  # pragma: no cover - older Sublime without QuickPanelItem
+        items = [f'{name} — {short_title}' for name in names]
+
     window.show_quick_panel(
-        labels, _on_done,
-        placeholder=f'Agent wants to: {title}',
+        items, _on_done,
+        placeholder=f'Agent wants to: {short_title}',
     )
 
 

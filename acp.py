@@ -13,14 +13,22 @@ from .modules.commands import (
     AcpStopCommand,
     AcpSwitchModeCommand,
     AcpSwitchModelCommand,
+    AcpSwitchThoughtLevelCommand,
 )
 from .modules.completions import AcpFileCompletionListener
 from .modules.config import STATUS_KEY_DAEMON, STATUS_KEY_USAGE, settings
-from .modules.daemon import _stop_daemon, _stop_idle_timer, stop_all_daemons
+from .modules.daemon import (
+    _stop_daemon,
+    _stop_idle_timer,
+    clear_unload,
+    request_unload,
+    stop_all_daemons,
+)
 
 
 def plugin_loaded():
-    """Configure debug mode on plugin load."""
+    """Configure debug mode and clear unload state on plugin load."""
+    clear_unload()
     if settings().get('debug', False):
         os.environ['ACP_DEBUG'] = '1'
     else:
@@ -29,7 +37,8 @@ def plugin_loaded():
 
 def _stop_all_daemons() -> None:
     """Stop every running daemon across all windows (used on plugin unload)."""
-    stop_all_daemons(_stop_daemon)
+    request_unload()
+    stop_all_daemons(_stop_daemon, join_timeout=None)
 
 
 def plugin_unloaded():

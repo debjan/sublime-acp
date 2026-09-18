@@ -77,11 +77,21 @@
     // Show context token usage in the status bar (e.g. ctx 27% (53k/200k))
     "context_usage": true,
 
+    // Git-based "Changed files" summary after each agent turn
+    // (silent no-op outside git repos):
+    //   "diff"       - filenames + per-file diff fences
+    //   "counts"     - filenames with change counts only (default)
+    //   false        - disabled entirely
+    "git_turn_summary": "counts",
+
     // How agent thought chunks (thinking...) are surfaced:
     //   "enabled"  - thoughts render in the output view as blockquotes (default)
     //   "console"  - thoughts go to the Sublime console (stderr); view shows the reply only
     //   "disabled" - thoughts are dropped; view shows the reply only
     "thoughts": "enabled",
+
+    // Maximum sessions shown by "ACP: Continue Session" (session/list)
+    "session_list_limit": 10,
 
     // Seconds of inactivity before auto-terminating the daemon (0 = disabled)
     "daemon_idle_timeout": 900,

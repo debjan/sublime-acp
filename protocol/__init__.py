@@ -6,6 +6,7 @@ from .session import (
     STATUS_LOADED,
     STATUS_NEW,
     STATUS_RESUMED,
+    list_sessions,
     new_session,
     resolve_session,
 )
@@ -31,6 +32,7 @@ __all__ = [
     'acp_log',
     'cleanup_process',
     'close_writer',
+    'list_sessions',
     'new_session',
     'resolve_session',
     'signal_process_group',

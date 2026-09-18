@@ -31,7 +31,7 @@ flowchart LR
 
 1. **UI thread** - user actions (`acp_start`, `acp`, `acp_interrupt`, ...) run here. All Sublime API calls from background threads must be dispatched back through `sublime.set_timeout()` (the code uses the `ui.on_main()` helper).
 2. **Daemon thread** - owns an `asyncio` event loop. Prompts are enqueued with `run_coroutine_threadsafe` onto an `asyncio.Queue`; a prompt loop pops items, sends them via `send_prompt_and_stream`, and streams responses into the output view.
-3. **Agent subprocess** - spawned by `spawn_and_init` (handshake: initialize -> authenticate -> new/resume session), then stays connected.
+3. **Agent subprocess** - spawned by `spawn_and_init` (handshake: initialize -> authenticate -> new/resume session), then stays connected. *ACP: Continue Session* spawns a short-lived probe instead: initialize only, then `session/list` (filtered by cwd, paginated up to `session_list_limit`) to pick a session to resume.
 
 ## State management
 
@@ -48,7 +48,7 @@ Daemons are registered per window id in `_daemon_registry` guarded by its own lo
 
 ```mermaid
 flowchart LR
-    A[ACP: Start Agent Session] --> B[Create + register DaemonState]
+    A[ACP: Start Session] --> B[Create + register DaemonState]
     B --> C[Spawn daemon thread]
     C --> D[spawn_and_init handshake]
     D --> E[Prompt loop]

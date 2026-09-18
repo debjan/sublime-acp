@@ -25,17 +25,17 @@ git clone https://github.com/debjan/sublime-acp ACP
 
 ### Persistent chat session (daemon)
 
-1. `Ctrl+Shift+P` -> **"ACP: Start Agent Session"**
+1. `Ctrl+Shift+P` -> **"ACP: Start Session"**
 2. Pick an agent - a spinner shows while the agent initializes
 3. Once ready, a dedicated **"ACP Chat: Agent Name"** tab opens
 4. Send prompts via **"ACP: Prompt"** - responses accumulate in the chat tab
-5. Stop the session with **"ACP: Stop Agent Session"**
+5. Stop the session with **"ACP: Stop Session"**
 
 The daemon auto-terminates after 15 minutes of inactivity (configurable).
 
 ### Continue a previous session
 
-- `Ctrl+Shift+P` -> **"ACP: Continue Last Session"** - reconnects to your last session
+- `Ctrl+Shift+P` -> **"ACP: Continue Session"** - pick an agent, then pick from its recent sessions (via `session/list`, filtered by the current working directory, capped by `session_list_limit`). Agents without `session/list` support fall back to the last cached session.
 
 ### Walkthrough
 
@@ -68,19 +68,20 @@ Edit `ACP.sublime-settings` (Preferences -> Package Settings -> ACP):
 
 ## Commands
 
-| Palette Command               | Keybinding         | Description                                    |
-| ----------------------------- | ------------------ | ---------------------------------------------- |
-| ACP: Start Agent Session      | `Ctrl+Alt+A`       | Start a persistent agent daemon                |
-| ACP: Stop Agent Session       | `Ctrl+Alt+Shift+A` | Terminate the running daemon                   |
-| ACP: Send Prompt              | `Alt+Shift+A`      | One-shot prompt (or send to daemon)            |
-| ACP: Interrupt Current Prompt | `Ctrl+Break`       | Cancel the in-flight prompt (daemon only)      |
-| ACP: Continue Agent Session   | -                  | Reconnect to your last session                 |
-| ACP: Switch Model             | -                  | Change model mid-session (daemon only)         |
-| ACP: Switch Mode              | -                  | Change session mode mid-session (daemon only)  |
+| Palette Command               | Keybinding         | Description                                            |
+| ----------------------------- | ------------------ | ------------------------------------------------------ |
+| ACP: Start Session            | `Ctrl+Alt+A`       | Start a persistent agent daemon                        |
+| ACP: Stop Session             | `Ctrl+Alt+Shift+A` | Terminate the running daemon                           |
+| ACP: Send Prompt              | `Alt+Shift+A`      | One-shot prompt (or send to daemon)                    |
+| ACP: Interrupt Current Prompt | `Ctrl+Break`       | Cancel the in-flight prompt (daemon only)              |
+| ACP: Continue Session         | -                  | Pick a recent session via `session/list` and resume it |
+| ACP: Switch Model             | -                  | Change model mid-session (daemon only)                 |
+| ACP: Switch Mode              | -                  | Change session mode mid-session (daemon only)          |
+| ACP: Switch Thought Level     | -                  | Change reasoning effort mid-session (daemon only)      |
 
-### Switching model or mode
+### Switching model, mode, or thought level
 
-While a daemon session is active, **ACP: Switch Model** and **ACP: Switch Mode** show a quick panel populated from the agent's advertised `config_options`. The current selection is marked with `✓`. These commands are only enabled when the active agent supports the corresponding option - agents like Opencode, Pi, Claude Code, and Droid expose model switching; Opencode and Claude Code also expose mode switching (e.g. `build` / `plan`).
+While a daemon session is active, **ACP: Switch Model**, **ACP: Switch Mode**, and **ACP: Switch Thought Level** show a quick panel populated from the agent's advertised `config_options`. The current selection is marked with `✓`. These commands are only enabled when the active agent supports the corresponding option - agents like Opencode, Pi, Claude Code, and Droid expose model switching; Opencode and Claude Code also expose mode switching (e.g. `build` / `plan`); Opencode, Pi, Droid, Claude Code, and Kimi expose thought-level switching.
 
 ## Requirements
 

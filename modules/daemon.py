@@ -27,7 +27,7 @@ from ..protocol import (
     close_writer,
     signal_process_group,
 )
-from . import broadcast, cache, ui
+from . import broadcast, cache, git_summary, ui
 from .config import (
     DEFAULT_PERMISSIONS,
     IDLE_TIMEOUT_DEFAULT,
@@ -140,6 +140,9 @@ class DaemonState:
         acp_log('daemon_state', 'daemon state reset complete')
 
         def _clear_status():
+            current = get_state(window_id) if window_id is not None else None
+            if current is not None and current is not self:
+                return
             win = output_view.window() if output_view else None
             if win is None and window_id is not None:
                 win = next((w for w in sublime.windows() if w.id() == window_id), None)
@@ -174,17 +177,44 @@ def running_windows() -> list[int]:
         return [wid for wid, s in _daemon_registry.items() if s.is_running()]
 
 
-def stop_all_daemons(stop_func) -> None:
-    """Stop all running daemons across all windows."""
+_unloading: bool = False
+
+
+def request_unload() -> None:
+    """Mark the plugin as unloading so stale threads stop touching the UI."""
+    global _unloading
+    _unloading = True
+
+
+def clear_unload() -> None:
+    """Reset the unloading flag once the plugin finishes loading."""
+    global _unloading
+    _unloading = False
+
+
+def is_unloading() -> bool:
+    """Return True while the plugin is unloading (reload/disable)."""
+    return _unloading
+
+
+def stop_all_daemons(stop_func, join_timeout: float | None = 2.5) -> None:
+    """Stop all running daemons across all windows.
+
+    When *join_timeout* is ``None`` the stop threads are fire-and-forget
+    (never block the caller — required on the main thread during
+    ``plugin_unloaded``).
+    """
     wids = list(running_windows())
     threads = [
-        threading.Thread(target=stop_func, args=(wid, 2.0), daemon=True)
+        threading.Thread(target=stop_func, args=(wid, 1.0), daemon=True)
         for wid in wids
     ]
     for t in threads:
         t.start()
+    if join_timeout is None:
+        return
     for t in threads:
-        t.join(timeout=2.5)
+        t.join(timeout=join_timeout)
 
 # Cache helpers
 
@@ -840,6 +870,9 @@ def _daemon_thread_main(
                     finally:
                         state.set(permission_pending=False)
 
+                git_mode = git_summary.resolve_mode(settings.get('git_turn_summary', 'counts'))
+                git_base = git_summary.snapshot(work_dir) if git_mode != git_summary.GIT_SUMMARY_OFF else None
+
                 ok = await send_prompt_and_stream(
                     conn, sid, prompt_text,
                     system_prompt if first_prompt else None,
@@ -868,6 +901,18 @@ def _daemon_thread_main(
 
                 acp_log('daemon_session', 'prompt completed')
                 async_queue.task_done()
+                try:
+                    summary = git_summary.summarize(
+                        git_base, work_dir,
+                        include_diff=(git_mode == git_summary.GIT_SUMMARY_DIFF),
+                    )
+                except Exception as exc:
+                    acp_log('daemon_session', f'git summary failed: {exc}')
+                    summary = None
+                if summary:
+                    ui.on_main(
+                        lambda s=summary, ov=output_view: ui.append_to_output_view(ov, s),
+                    )
                 ui.append_turn_divider(output_view)
                 state.set(
                     is_busy=False, last_activity=time.monotonic(),

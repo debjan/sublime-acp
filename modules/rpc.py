@@ -20,6 +20,7 @@ from ..protocol import (
     Connection,
     acp_log,
     cleanup_process,
+    list_sessions,
     resolve_session,
     spawn_subprocess,
 )
@@ -339,7 +340,7 @@ async def _handle_init_phase(
     conn.request_callback = _make_request_callback(
         lambda mid, method, params: _handle_agent_request(
             conn, mid, method, params,
-            ws_root, permissions_config, 'one-shot',
+            ws_root, permissions_config, 'one-shot', None,
         ),
     )
 
@@ -730,6 +731,68 @@ async def spawn_and_init(
         raise
 
 
+async def fetch_sessions(
+    cmd: list[str],
+    env: dict | None = None,
+    cwd: str | None = None,
+    limit: int = 10,
+) -> tuple[list[dict[str, Any]] | None, bool]:
+    """Fetch recent sessions via ``session/list``.
+
+    Spawns the agent, runs ``initialize`` only (no session is created),
+    checks ``sessionCapabilities.list``, and pages through ``session/list``
+    filtered by *cwd* up to *limit* entries.
+
+    Args:
+        cmd: Agent command list.
+        env: Optional environment variables.
+        cwd: Working directory filter for ``session/list``.
+        limit: Maximum number of sessions to return.
+
+    Returns:
+        ``(sessions, supported)`` where *supported* is ``False`` when the
+        agent does not advertise ``sessionCapabilities.list`` (or init
+        failed, in which case *sessions* is ``None``).
+    """
+    proc, reader, writer = await spawn_subprocess(cmd, env, cwd)
+    conn = Connection(reader, writer)
+    conn.request_callback = _make_request_callback(
+        lambda mid, method, params: _handle_agent_request(
+            conn, mid, method, params, cwd or os.getcwd(), None, 'one-shot',
+        ),
+    )
+    try:
+        try:
+            init = await conn.send_request('initialize', _INITIALIZE_PARAMS)
+        except (ACPError, asyncio.TimeoutError, ConnectionError) as exc:
+            acp_log('rpc', f'fetch_sessions: initialize failed for {cmd}: {exc!r}')
+            return None, False
+        caps = (init.get('agentCapabilities') or {}).get('sessionCapabilities') or {}
+        if not isinstance(caps.get('list'), dict):
+            return [], False
+        sessions: list[dict[str, Any]] = []
+        cursor: str | None = None
+        while len(sessions) < limit:
+            try:
+                page, cursor = await list_sessions(conn, cwd=cwd, cursor=cursor)
+            except ACPError as exc:
+                if not sessions and getattr(exc, 'code', None) == -32601:
+                    return [], False
+                acp_log('rpc', f'fetch_sessions: session/list failed: {exc!r}')
+                break
+            except (asyncio.TimeoutError, ConnectionError) as exc:
+                acp_log('rpc', f'fetch_sessions: session/list failed: {exc!r}')
+                break
+            if not page:
+                break
+            sessions.extend(page)
+            if not cursor:
+                break
+        return sessions[:limit], True
+    finally:
+        await _close_connection(proc, conn)
+
+
 async def send_prompt_and_stream(
     conn: Connection,
     session_id: str,
@@ -797,9 +860,11 @@ async def send_prompt_and_stream(
 
     ws_root = workspace_root or os.getcwd()
     thought_buf: list[str] = []
+    at_turn_start = True
+    pending_trailing = ''
 
     def on_notification(method: str, params: dict) -> None:
-        nonlocal thought_buf
+        nonlocal thought_buf, at_turn_start, pending_trailing
         if method != 'session/update':
             return
         matched, commands = _extract_available_commands(method, params)
@@ -823,6 +888,18 @@ async def send_prompt_and_stream(
                 had_thoughts = _flush_thoughts(thought_buf, thoughts_mode, callback)
                 if thoughts_mode in ('enabled', 'console') and had_thoughts:
                     chunk = '\n' + chunk
+                    at_turn_start = False
+                elif at_turn_start:
+                    chunk = chunk.lstrip('\r\n')
+                    if not chunk:
+                        continue
+                    at_turn_start = False
+                chunk = pending_trailing + chunk
+                stripped = chunk.rstrip('\r\n')
+                pending_trailing = chunk[len(stripped):]
+                chunk = stripped
+                if not chunk:
+                    continue
                 if callback:
                     callback(chunk)
                 else:
@@ -892,6 +969,12 @@ async def send_prompt_and_stream(
         all_text = flushed + '\n' + all_text
     elif thoughts_mode == 'enabled' and flushed:
         all_text = flushed
+    if pending_trailing and all_text:
+        all_text = pending_trailing + all_text
+    pending_trailing = ''
+    if at_turn_start:
+        all_text = all_text.lstrip('\r\n')
+    all_text = all_text.rstrip('\r\n')
     if all_text:
         if callback:
             callback(all_text)

@@ -110,3 +110,32 @@ async def resolve_session(
             )
 
     return await new_session(conn, base_params)
+
+
+async def list_sessions(
+    conn: Connection,
+    cwd: str | None = None,
+    cursor: str | None = None,
+) -> tuple[list[dict[str, Any]], str | None]:
+    """List existing sessions via ``session/list``.
+
+    Args:
+        conn: The active connection to the agent.
+        cwd: Optional working directory filter.
+        cursor: Optional pagination cursor from a previous response.
+
+    Returns:
+        ``(sessions, next_cursor)`` where *sessions* is a list of session
+        info dicts and *next_cursor* is the opaque pagination token or
+        ``None`` when there are no more pages.
+    """
+    params: dict[str, Any] = {}
+    if cwd is not None:
+        params['cwd'] = cwd
+    if cursor is not None:
+        params['cursor'] = cursor
+    result = await conn.send_request('session/list', params)
+    if not result:
+        return [], None
+    sessions = result.get('sessions') or []
+    return sessions, result.get('nextCursor')

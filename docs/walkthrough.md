@@ -28,14 +28,14 @@ One-shot mode is deliberately read-only: agents are told to **never edit files**
 
 When you are going to iterate - "make this change, then fix the tests, then show me the diff" - a one-shot process can't keep up. Start a daemon instead.
 
-1. **Start the session.** *ACP: Start Agent Session*, pick the agent. A spinner shows while the agent initializes: handshake -> authentication -> session creation (or resume).
+1. **Start the session.** *ACP: Start Session*, pick the agent. A spinner shows while the agent initializes: handshake -> authentication -> session creation (or resume).
 2. **Chat tab appears.** A dedicated *ACP Chat:* tab opens in a split, and the input panel returns so you can keep typing.
 3. **Chat as long as you like.** Each prompt is appended to the same tab; the agent keeps full context - files it read, edits it made, everything you discussed. `@` and `/` completions still work in the input panel.
 4. **Approve tool use when asked.** If the agent requests a permission (e.g. a file write) that matches neither `auto_allow` nor `auto_reject`, a quick panel opens **in the window that owns the daemon** with the options the agent offered. Pick one and the turn continues; press Esc to cancel. The idle timer never shuts the daemon down while such a prompt is open (see [permissions.md](permissions.md)).
-5. **Switch model or mode mid-session.** With *ACP: Switch Model* / *ACP: Switch Mode* a quick panel lists the options the agent advertises (Opencode, Pi, Claude Code, Droid expose model switching; Opencode and Claude Code also expose modes like `build`/`plan`). The current value is marked with ✓; focus returns to the input panel after you choose.
+5. **Switch model, mode, or thought level mid-session.** With *ACP: Switch Model* / *ACP: Switch Mode* / *ACP: Switch Thought Level* a quick panel lists the options the agent advertises (Opencode, Pi, Claude Code, Droid expose model switching; Opencode and Claude Code also expose modes like `build`/`plan`; Opencode, Pi, Droid, Claude Code, and Kimi expose thought-level switching). The current value is marked with ✓; focus returns to the input panel after you choose.
 6. **Interrupt a long turn.** `Ctrl+Break` (or *ACP: Interrupt Current Prompt*) cancels the in-flight prompt while keeping the connection and session alive - no respawn, no lost context. A marker line is appended to the chat tab.
-7. **Stop, or let it idle.** *ACP: Stop Agent Session* terminates the daemon gracefully. If you simply stop typing, the daemon auto-terminates after `daemon_idle_timeout` seconds of inactivity (default 900 s; set to `0` to disable). Closing the window that owns the daemon stops it too.
-8. **Pick up where you left off.** *ACP: Continue Last Session* reconnects to the last saved session for the agent, so a chat survives a restart (or a switch to the terminal).
+7. **Stop, or let it idle.** *ACP: Stop Session* terminates the daemon gracefully. If you simply stop typing, the daemon auto-terminates after `daemon_idle_timeout` seconds of inactivity (default 900 s; set to `0` to disable). Closing the window that owns the daemon stops it too.
+8. **Pick up where you left off.** *ACP: Continue Session* lists the agent's recent sessions for the current working directory (via `session/list`, newest first, capped by `session_list_limit`) - pick one to resume, so a chat survives a restart. Agents without `session/list` support fall back to the last cached session.
 
 ```mermaid
 sequenceDiagram
@@ -87,8 +87,9 @@ sequenceDiagram
 | Attach the current selection automatically | set `attach_selection: true` - appends `@path:line-line` (or the text) to every prompt                 |
 | Change the model mid-session               | *ACP: Switch Model* (if the agent advertises the option)                                               |
 | Switch session mode (build/plan)           | *ACP: Switch Mode* (if the agent advertises the option)                                                |
+| Change reasoning effort mid-session        | *ACP: Switch Thought Level* (if the agent advertises the option)                                       |
 | Cancel a runaway turn                      | `Ctrl+Break` - interrupt without killing the session                                                   |
-| Reuse yesterday's context                  | *ACP: Continue Last Session*                                                                           |
+| Reuse yesterday's context                  | *ACP: Continue Session* (recent sessions via `session/list`)                                           |
 | Let writes through automatically           | add the tool kind to `permissions.auto_allow` (e.g. `"write*"`) - see [permissions.md](permissions.md) |
 
 ## Tips & tricks
@@ -108,7 +109,7 @@ sequenceDiagram
 | `modules/daemon.py`      | daemon lifecycle, prompt queue, idle timer                                     |
 | `modules/permissions.py` | auto-allow/reject and the permission quick panel                               |
 | `modules/completions.py` | `@`/`/` completions in the input panel                                         |
-| `modules/cache.py`       | last session ID per agent (powers *Continue Last Session*)                     |
+| `modules/cache.py`       | last session ID per agent (fallback when the agent lacks `session/list`)       |
 
 ## Related docs
 
