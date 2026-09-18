@@ -12,6 +12,7 @@ import difflib
 import hashlib
 import os
 import subprocess
+import sys
 from itertools import islice
 from typing import Any
 
@@ -46,6 +47,12 @@ def resolve_mode(value: Any) -> str:
 def _run_git(work_dir: str, *args: str) -> str | None:
     """Run a git command in *work_dir*, return stdout or ``None`` on failure."""
     try:
+        hide_kwargs: dict[str, Any] = {}
+        if sys.platform == 'win32':
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = subprocess.SW_HIDE
+            hide_kwargs['startupinfo'] = startupinfo
         proc = subprocess.run(
             ['git', '-C', work_dir, *args],
             stdout=subprocess.PIPE,
@@ -53,6 +60,7 @@ def _run_git(work_dir: str, *args: str) -> str | None:
             timeout=30,
             check=False,
             creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
+            **hide_kwargs,
         )
     except Exception:
         return None
