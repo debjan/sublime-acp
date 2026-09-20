@@ -288,6 +288,85 @@ def _handle_session_update_notification(msg: dict) -> list:
     return []
 
 
+# Tool call rendering. Agents report each tool call as an initial ``tool_call``
+# update followed by ``tool_call_update`` notifications carrying partial
+# fields. Both ``sessionUpdate`` and ``type`` are accepted as the discriminator
+# because agents differ in which one they emit.
+
+_TOOL_CALL_DISCRIMINATORS = ('tool_call', 'tool_call_update')
+_TOOL_CALL_TERMINAL_ICONS = {'completed': '✓', 'failed': '✗'}
+_TOOL_CALL_SUMMARY_LIMIT = 120
+
+
+def _tool_call_discriminator(update: dict) -> str | None:
+    """Return the tool call discriminator for *update*, or ``None``.
+
+    Accepts the ``sessionUpdate`` or ``type`` field holding either
+    ``tool_call`` or ``tool_call_update``.
+    """
+    for key in ('sessionUpdate', 'type'):
+        if update.get(key) in _TOOL_CALL_DISCRIMINATORS:
+            return update[key]
+    return None
+
+
+def _tool_call_error_summary(content: Any) -> str:
+    """Return a one-line summary of a tool call's text *content*, or ``''``.
+
+    Takes the first non-empty line of the first text block, truncated to
+    ``_TOOL_CALL_SUMMARY_LIMIT`` characters.
+    """
+    if isinstance(content, dict):
+        content = [content]
+    if not isinstance(content, list):
+        return ''
+    for block in content:
+        if not isinstance(block, dict) or block.get('type') != 'text':
+            continue
+        for line in str(block.get('text', '')).splitlines():
+            if stripped := line.strip():
+                if len(stripped) > _TOOL_CALL_SUMMARY_LIMIT:
+                    return stripped[:_TOOL_CALL_SUMMARY_LIMIT - 3] + '...'
+                return stripped
+    return ''
+
+
+def _tool_display_text(value: str) -> str:
+    """Collapse agent-provided text to a single display line.
+
+    Whitespace runs (including ``\r``/``\n``) become single spaces and the
+    result is stripped, so a multi-line title cannot break the bullet format.
+    """
+    return ' '.join(value.split())
+
+
+def _format_tool_bullet(entry: dict) -> str:
+    """Format a tracked tool call *entry* as a single markdown bullet.
+
+    Args:
+        entry: Accumulated tool call fields: at least ``status``, plus any of
+            ``kind``, ``title`` and ``content`` reported by the agent.
+
+    Returns:
+        A single line such as ``- ✓ **read** `Read modules/rpc.py```. A failed
+        call appends a one-line error summary when the agent supplied one.
+    """
+    status = entry.get('status') or ''
+    icon = _TOOL_CALL_TERMINAL_ICONS.get(status, '?')
+    kind = entry.get('kind')
+    kind = _tool_display_text(kind).replace('`', '') if isinstance(kind, str) else ''
+    if not kind:
+        kind = 'other'
+    title = entry.get('title')
+    title = _tool_display_text(title).replace('`', '') if isinstance(title, str) else ''
+    if not title:
+        title = kind
+    bullet = f'- {icon} **{kind}** `{title}`'
+    if status == 'failed' and (summary := _tool_call_error_summary(entry.get('content'))):
+        bullet = f'{bullet} - {_tool_display_text(summary)}'
+    return bullet
+
+
 def _make_fs_permission_params(
     tool_kind: str,
     title: str,
@@ -735,10 +814,14 @@ class _StreamState:
         self.thought_buf: list[str] = []
         self.at_turn_start = True
         self.pending_trailing = ''
+        self.tool_calls: dict[str, dict] = {}
+        self.last_was_tool = False
 
 
 def _emit_text(state: _StreamState, chunk: str, thoughts_mode: str, callback: Any | None) -> None:
     had_thoughts = _flush_thoughts(state.thought_buf, thoughts_mode, callback)
+    if state.last_was_tool:
+        chunk = '\n' + chunk
     if thoughts_mode in ('enabled', 'console') and had_thoughts:
         chunk = '\n' + chunk
         state.at_turn_start = False
@@ -747,6 +830,7 @@ def _emit_text(state: _StreamState, chunk: str, thoughts_mode: str, callback: An
         if not chunk:
             return
         state.at_turn_start = False
+    state.last_was_tool = False
     chunk = state.pending_trailing + chunk
     stripped = chunk.rstrip('\r\n')
     state.pending_trailing = chunk[len(stripped):]
@@ -760,6 +844,67 @@ def _emit_text(state: _StreamState, chunk: str, thoughts_mode: str, callback: An
         sys.stdout.flush()
 
 
+def _consume_tool_call(state: _StreamState, params: dict) -> str | None:
+    """Track a tool call update and return its bullet once it terminates.
+
+    Merges the partial ``ToolCallUpdateFields`` the agent reports under the
+    same tool call ID. Returns ``None`` for non-terminal updates, updates
+    without a tool call ID, and calls that already rendered a bullet.
+
+    Args:
+        state: The per-turn stream state holding accumulated tool calls.
+        params: The notification params containing the ``update`` dict.
+
+    Returns:
+        A formatted markdown bullet when the call first reaches ``completed``
+        or ``failed``, otherwise ``None``.
+    """
+    update = params.get('update', {})
+    if not isinstance(update, dict) or _tool_call_discriminator(update) is None:
+        return None
+    tool_call_id = update.get('toolCallId')
+    if not isinstance(tool_call_id, str) or not tool_call_id:
+        return None
+
+    entry = state.tool_calls.setdefault(tool_call_id, {})
+    for field in ('kind', 'title', 'content'):
+        if update.get(field) is not None:
+            entry[field] = update[field]
+
+    status = update.get('status')
+    if status not in _TOOL_CALL_TERMINAL_ICONS or entry.get('emitted'):
+        return None
+    entry['emitted'] = True
+    entry['status'] = status
+    return _format_tool_bullet(entry)
+
+
+def _emit_tool_bullet(
+    state: _StreamState,
+    bullet: str,
+    thoughts_mode: str,
+    callback: Any | None,
+) -> None:
+    """Emit a tool call *bullet* on its own line.
+
+    Flushes buffered thoughts first so thoughts stay in order, and discards
+    the pending trailing newlines held back by ``_emit_text``. A new bullet
+    block is separated from preceding text by a blank line, while consecutive
+    bullets stay on adjacent lines.
+    """
+    _flush_thoughts(state.thought_buf, thoughts_mode, callback)
+    state.pending_trailing = ''
+    prefix = '' if state.at_turn_start or state.last_was_tool else '\n\n'
+    text = f'{prefix}{bullet}\n'
+    state.at_turn_start = False
+    state.last_was_tool = True
+    if callback:
+        callback(text)
+    else:
+        sys.stdout.write(text)
+        sys.stdout.flush()
+
+
 def _dispatch_stream_notification(
     state: _StreamState,
     method: str,
@@ -768,6 +913,7 @@ def _dispatch_stream_notification(
     callback: Any | None,
     on_commands: Any | None,
     on_usage: Any | None,
+    show_tool_calls: bool = True,
 ) -> None:
     if method != 'session/update':
         return
@@ -782,6 +928,10 @@ def _dispatch_stream_notification(
         acp_log('rpc', f'send_prompt_and_stream: usage_update (used={used}, size={size})')
         if on_usage:
             on_usage(used, size)
+        return
+    if show_tool_calls and (bullet := _consume_tool_call(state, params)):
+        acp_log('rpc', f'send_prompt_and_stream: tool call rendered: {bullet}')
+        _emit_tool_bullet(state, bullet, thoughts_mode, callback)
         return
     chunks = _handle_session_update_notification({'method': method, 'params': params})
     for chunk in chunks:
@@ -873,6 +1023,8 @@ def _flush_stream_tail(
     if state.pending_trailing and all_text:
         all_text = state.pending_trailing + all_text
     state.pending_trailing = ''
+    if state.last_was_tool and all_text:
+        all_text = '\n\n' + all_text
     if state.at_turn_start:
         all_text = all_text.lstrip('\r\n')
     if all_text := all_text.rstrip('\r\n'):
@@ -897,6 +1049,7 @@ async def send_prompt_and_stream(
     thoughts_mode: str = 'enabled',
     on_commands: Any | None = None,
     on_usage: Any | None = None,
+    show_tool_calls: bool = True,
 ) -> str:
     """Send a ``session/prompt`` and stream the response.
 
@@ -937,6 +1090,9 @@ async def send_prompt_and_stream(
         on_usage: Optional callable ``on_usage(used, size)`` invoked with
             token counts from any ``usage_update`` notification seen while
             streaming.
+        show_tool_calls: When ``True`` (default), render each tool call that
+            reaches a terminal status as a single-line markdown bullet in the
+            stream. When ``False``, tool calls are not rendered.
 
     Returns:
         A status string describing the outcome of the prompt: ``PROMPT_OK``
@@ -954,6 +1110,7 @@ async def send_prompt_and_stream(
     def on_notification(method: str, params: dict) -> None:
         _dispatch_stream_notification(
             state, method, params, thoughts_mode, callback, on_commands, on_usage,
+            show_tool_calls=show_tool_calls,
         )
 
     async def on_request(msg_id: int, method: str, params: dict) -> None:
@@ -996,6 +1153,7 @@ async def acp(
     permissions_config: dict | None = None,
     auth: bool | None = None,
     thoughts_mode: str = 'enabled',
+    show_tool_calls: bool = True,
 ) -> tuple[str | None, str, str | None]:
     """Run a one-shot ACP prompt.
 
@@ -1022,6 +1180,8 @@ async def acp(
         thoughts_mode: ``'enabled'`` (default) streams thoughts to *callback*
             as blockquotes; ``'console'`` writes thoughts to ``stderr``;
             ``'disabled'`` drops thoughts entirely.
+        show_tool_calls: When ``True`` (default), render each tool call that
+            reaches a terminal status as a single-line markdown bullet.
 
     Returns:
         ``(session_id, status, session_error)`` where *status* is one of
@@ -1048,6 +1208,7 @@ async def acp(
             workspace_root=cwd,
             permissions_config=permissions_config,
             thoughts_mode=thoughts_mode,
+            show_tool_calls=show_tool_calls,
         )
 
         status = opened_via if opened_via in (STATUS_NEW, STATUS_RESUMED, STATUS_LOADED) else STATUS_NEW

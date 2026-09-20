@@ -38,6 +38,7 @@ from .config import (
     PERMISSION_PROMPT_TIMEOUT,
     STATUS_KEY_DAEMON,
     STATUS_KEY_USAGE,
+    TOOL_CALLS_DEFAULT,
     TURN_DIVIDER,
 )
 from .config import settings as load_settings
@@ -510,6 +511,7 @@ def _worker_thread(
     """
     async def async_wrapper():
         current_env = _build_env(env)
+        tool_calls_mode = settings.get('tool_calls', TOOL_CALLS_DEFAULT) if settings else TOOL_CALLS_DEFAULT
         result_session_id, status, session_error = await acp(
             cmd=cmd,
             prompt=prompt,
@@ -523,6 +525,7 @@ def _worker_thread(
             permissions_config=permissions_config,
             auth=auth,
             thoughts_mode=settings.get('thoughts', 'enabled') if settings else 'enabled',
+            show_tool_calls=tool_calls_mode == 'enabled',
         )
         if status == STATUS_ERROR or result_session_id is None:
             if session_id:
@@ -1204,6 +1207,7 @@ def _daemon_thread_main(
                     thoughts_mode=settings.get('thoughts', 'enabled'),
                     on_commands=_make_commands_updater(cmd),
                     on_usage=usage_updater,
+                    show_tool_calls=settings.get('tool_calls', TOOL_CALLS_DEFAULT) == 'enabled',
                 )
                 if ok != PROMPT_OK:
                     dismiss_permission_prompt(window_id)

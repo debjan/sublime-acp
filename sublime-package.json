@@ -116,6 +116,12 @@
               "default": "enabled",
               "description": "How agent thought chunks (thinking...) are surfaced: 'enabled' renders in output as blockquotes, 'console' sends to Sublime console (stderr), 'disabled' drops them."
             },
+            "tool_calls": {
+              "type": "string",
+              "enum": ["enabled", "disabled"],
+              "default": "enabled",
+              "description": "How agent tool call results are surfaced: 'enabled' renders each completed/failed tool call as a one-line markdown bullet, 'disabled' hides them."
+            },
             "session_list_limit": {
               "type": "integer",
               "minimum": 1,

@@ -11,6 +11,7 @@ def settings():
 
 DEFAULT_TIMEOUT = 600              # agent command timeout (s)
 CACHE_TTL_DEFAULT = 300            # file-walker cache expiry (s)
+TOOL_CALLS_DEFAULT = 'enabled'     # render terminal tool calls as single-line bullets
 IDLE_TIMEOUT_DEFAULT = 900         # daemon idle shutdown timeout (s)
 PERMISSION_PROMPT_TIMEOUT = 300    # hard cap on interactive permission waits (s)
 IDLE_TIMER_INTERVAL = 30           # idle-timeout check interval (s)

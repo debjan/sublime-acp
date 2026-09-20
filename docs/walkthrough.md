@@ -19,7 +19,7 @@ There are two ways to talk to an agent, and they coexist:
    - `@` - file and folder paths in your project, filtered by your `.gitignore` and the `ignore` setting;
    - `/` - the agent's own slash commands, read from the agent during initialization.
 
-3. **Press Enter.** A new scratch tab named *ACP Prompt:* opens and the response streams in as it is produced. Agent thinking chunks appear according to the `thoughts` setting (blockquotes in the tab, console-only, or dropped).
+3. **Press Enter.** A new scratch tab named *ACP Prompt:* opens and the response streams in as it is produced. Agent thinking chunks appear according to the `thoughts` setting (blockquotes in the tab, console-only, or dropped), and each completed or failed tool call appears as a one-line bullet according to the `tool_calls` setting.
 4. **The session ends.** When the reply finishes the agent subprocess is torn down. Nothing is remembered for the next prompt.
 
 One-shot mode is deliberately read-only: agents are told to **never edit files** and to return diffs with `file:line` annotations instead. If the agent tries a filesystem write through ACP's `fs/writeTextFile` endpoint anyway, it is **denied** (no UI exists to approve it) unless you have an `auto_allow` rule for it.
@@ -30,7 +30,7 @@ When you are going to iterate - "make this change, then fix the tests, then show
 
 1. **Start the session.** *ACP: Start Session*, pick the agent. A spinner shows while the agent initializes: handshake -> authentication -> session creation (or resume).
 2. **Chat tab appears.** A dedicated *ACP Chat:* tab opens in a split, and the input panel returns so you can keep typing.
-3. **Chat as long as you like.** Each prompt is appended to the same tab; the agent keeps full context - files it read, edits it made, everything you discussed. `@` and `/` completions still work in the input panel.
+3. **Chat as long as you like.** Each prompt is appended to the same tab; the agent keeps full context - files it read, edits it made, everything you discussed. `@` and `/` completions still work in the input panel. As the agent works, each completed or failed tool call is appended as a one-line bullet (`` - ✓ **read** `Read modules/rpc.py` ``), so you can follow which files it read or edited and which commands it ran.
 4. **Approve tool use when asked.** If the agent requests a permission (e.g. a file write) that matches neither `auto_allow` nor `auto_reject`, a quick panel opens **in the window that owns the daemon** with the options the agent offered. Pick one and the turn continues; press Esc to cancel. The idle timer never shuts the daemon down while such a prompt is open (see [permissions.md](permissions.md)).
 5. **Switch model, mode, or thought level mid-session.** With *ACP: Switch Model* / *ACP: Switch Mode* / *ACP: Switch Thought Level* a quick panel lists the options the agent advertises (Opencode, Pi, Claude Code, Droid expose model switching; Opencode and Claude Code also expose modes like `build`/`plan`; Opencode, Pi, Droid, Claude Code, and Kimi expose thought-level switching). The current value is marked with ✓; focus returns to the input panel after you choose.
 6. **Interrupt a long turn.** `Ctrl+Break` (or *ACP: Interrupt Current Prompt*) cancels the in-flight prompt while keeping the connection and session alive - no respawn, no lost context. A marker line is appended to the chat tab.

@@ -90,6 +90,11 @@
     //   "disabled" - thoughts are dropped; view shows the reply only
     "thoughts": "enabled",
 
+    // How agent tool call results are surfaced in the output view:
+    //   "enabled"  - each completed/failed tool call renders as a one-line markdown bullet (default)
+    //   "disabled" - tool call results are not rendered
+    "tool_calls": "enabled",
+
     // Maximum sessions shown by "ACP: Switch Session" (session/list)
     "session_list_limit": 10,
 

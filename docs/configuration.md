@@ -67,6 +67,17 @@ The `thoughts` setting controls how agent thinking chunks are surfaced:
 | `"console"`  | Sent to the Sublime console only; view shows reply  |
 | `"disabled"` | Dropped entirely                                    |
 
+### Tool calls
+
+The `tool_calls` setting controls whether agent tool call results are surfaced in the output view:
+
+| Value        | Behavior                                                              |
+| ------------ | --------------------------------------------------------------------- |
+| `"enabled"`  | Each completed/failed tool call renders as a one-line markdown bullet |
+| `"disabled"` | Tool call results are not rendered                                    |
+
+Bullets stream inline as the agent reports each tool finishing, for example `` - ✓ **read** `Read modules/rpc.py` ``. Failed calls use `✗` and append a one-line error summary. Non-terminal statuses are not shown.
+
 ### Permissions
 
 Controls automatic approval/rejection of agent tool calls and host-filesystem operations (see [permissions.md](permissions.md)):
