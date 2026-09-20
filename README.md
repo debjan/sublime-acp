@@ -68,16 +68,16 @@ For available options see [configuration.md](docs/configuration.md).
 
 ## Commands
 
-| Palette Command               | Keybinding         | Description                                                    |
-| ----------------------------- | ------------------ | -------------------------------------------------------------- |
-| ACP: Start Session            | `Ctrl+Alt+A`       | Start a persistent agent daemon                                |
-| ACP: Stop Session             | `Ctrl+Alt+Shift+A` | Terminate the running daemon                                   |
-| ACP: Send Prompt              | `Alt+Shift+A`      | One-shot prompt (or send to daemon)                            |
-| ACP: Interrupt Current Prompt | `Ctrl+Break`       | Cancel the in-flight prompt (daemon only)                      |
-| ACP: Switch Session           | -                  | Switch the running daemon to a recent session (`session/list`) |
-| ACP: Switch Model             | -                  | Change model mid-session (daemon only)                         |
-| ACP: Switch Mode              | -                  | Change session mode mid-session (daemon only)                  |
-| ACP: Switch Thought Level     | -                  | Change reasoning effort mid-session (daemon only)              |
+| Palette Command               | Keybinding         | Description                                       |
+| ----------------------------- | ------------------ | ------------------------------------------------- |
+| ACP: Start Session            | `Ctrl+Alt+A`       | Start a persistent agent daemon                   |
+| ACP: Stop Session             | `Ctrl+Alt+Shift+A` | Terminate the running daemon                      |
+| ACP: Send Prompt              | `Alt+Shift+A`      | One-shot prompt (or send to daemon)               |
+| ACP: Interrupt Current Prompt | `Ctrl+Break`       | Cancel the in-flight prompt (daemon only)         |
+| ACP: Switch Session           | -                  | Switch the running daemon to a recent session     |
+| ACP: Switch Model             | -                  | Change model mid-session (daemon only)            |
+| ACP: Switch Mode              | -                  | Change session mode mid-session (daemon only)     |
+| ACP: Switch Thought Level     | -                  | Change reasoning effort mid-session (daemon only) |
 
 To enable keyboard shortcut open "Preferences -> Package Settings -> ACP -> Example Key Bindings".
 
