@@ -10,7 +10,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from .config import CACHE_TTL_DEFAULT, settings
+from .config import CACHE_TTL_DEFAULT
 
 cache_lock = threading.RLock()
 
@@ -34,10 +34,16 @@ def _parse_agents(data_file: Path) -> tuple[dict, int | None]:
         return {}, mtime_ns
 
 
-def load_agents(cache_dir: Path, ttl: float | None = None) -> dict:
-    """Load the agents dict from ``cache_dir/agents.json``."""
-    if ttl is None:
-        ttl = settings().get('cache_ttl', CACHE_TTL_DEFAULT)
+def load_agents(cache_dir: Path, ttl: float = CACHE_TTL_DEFAULT) -> dict:
+    """Load the agents dict from ``cache_dir/agents.json``.
+
+    *ttl* bounds memo reuse and is a plain value on purpose: this function
+    must never touch the Sublime API, since it runs on background threads
+    and is routinely called while holding ``cache_lock`` (a Sublime call
+    here can deadlock against the main thread waiting for that lock).
+    Callers on the main thread that want the configured ``cache_ttl``
+    must read it themselves and pass it in.
+    """
     data_file = _agents_path(cache_dir)
     with cache_lock:
         now = time.monotonic()

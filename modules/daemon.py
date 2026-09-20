@@ -22,9 +22,12 @@ from ..protocol import (
     STATUS_LOADED,
     STATUS_NEW,
     STATUS_RESUMED,
+    ACPError,
     acp_log,
     cleanup_process,
     close_writer,
+    list_sessions,
+    new_session,
     signal_process_group,
 )
 from . import broadcast, cache, git_summary, ui
@@ -81,6 +84,10 @@ class DaemonState:
         self.permission_pending: bool = False
         self.usage_used: int | None = None
         self.usage_size: int | None = None
+        self.agent_caps: dict | None = None
+        self.work_dir: str | None = None
+        self.model: str | None = None
+        self.permissions_config: dict | None = None
 
     def is_running(self) -> bool:
         with self._lock:
@@ -93,7 +100,7 @@ class DaemonState:
 
     def get(self, *keys: str):
         if not keys:
-            raise ValueError("DaemonState.get() requires at least one key")
+            raise ValueError('DaemonState.get() requires at least one key')
         with self._lock:
             d = {k: getattr(self, k, None) for k in keys}
             return d[keys[0]] if len(keys) == 1 else d
@@ -124,6 +131,10 @@ class DaemonState:
             self.permission_pending = False
             self.usage_used = None
             self.usage_size = None
+            self.agent_caps = None
+            self.work_dir = None
+            self.model = None
+            self.permissions_config = None
 
         if stop_idle_timer_func:
             stop_idle_timer_func(window_id)
@@ -201,7 +212,7 @@ def stop_all_daemons(stop_func, join_timeout: float | None = 2.5) -> None:
     """Stop all running daemons across all windows.
 
     When *join_timeout* is ``None`` the stop threads are fire-and-forget
-    (never block the caller — required on the main thread during
+    (never block the caller - required on the main thread during
     ``plugin_unloaded``).
     """
     wids = list(running_windows())
@@ -340,6 +351,20 @@ def _cache_daemon_agent_info(cmd, init_result):
             cache.save_agents(_cache_dir(), agents)
     except Exception as e:
         acp_log('daemon', f'error caching agent info: {e}')
+
+
+def _finalize_daemon_connection(conn, cmd, init_result, on_usage=None, strict=False):
+    """Wire up a freshly initialized daemon connection.
+
+    Caches agent info, installs the persistent notification handler,
+    and derives the session id plus agent capabilities. Returns
+    ``(session_id, agent_caps)``.
+    """
+    _cache_daemon_agent_info(cmd, init_result)
+    _install_notification_handler(conn, cmd, on_usage)
+    session_id = init_result['session_id'] if strict else init_result.get('session_id')
+    agent_caps = (init_result.get('initialize_result') or {}).get('agentCapabilities') or {}
+    return session_id, agent_caps
 
 
 def _build_env(env: dict) -> dict:
@@ -526,7 +551,8 @@ def _worker_thread(
     except Exception as exc:
         on_chunk(f'\n**[Agent Error]:** `{exc}`\n')
     finally:
-        if ui.dividers_enabled():
+        dividers = settings.get('turn_dividers', True) if settings is not None else True
+        if dividers:
             on_chunk(TURN_DIVIDER)
         _safe_shutdown_loop(loop)
 
@@ -736,10 +762,8 @@ async def _reconnect_daemon_session(
         return None, None, None
 
     proc, conn, init_result = result
-    new_sid = init_result.get('session_id')
+    new_sid, _ = _finalize_daemon_connection(conn, cmd, init_result, on_usage)
     opened_via = init_result.get('opened_via', STATUS_NEW)
-    _cache_daemon_agent_info(cmd, init_result)
-    _install_notification_handler(conn, cmd, on_usage)
     if opened_via in (STATUS_RESUMED, STATUS_LOADED):
         _note(f'*[Resumed session: {new_sid}]*\n')
     else:
@@ -747,6 +771,313 @@ async def _reconnect_daemon_session(
             _update_agent_session_id(cmd, new_sid)
         _note('*[Started a new session]*\n')
     return proc, conn, new_sid
+
+
+def _window_for_state(state: DaemonState):
+    """Return the Sublime window owning *state*, or ``None``."""
+    output_view = state.get('output_view')
+    if output_view is not None:
+        win = output_view.window()
+        if win is not None:
+            return win
+    window_id = state.get('window_id')
+    if window_id is not None:
+        return next((w for w in sublime.windows() if w.id() == window_id), None)
+    return None
+
+
+async def _resume_on_conn(conn, agent_caps: dict | None,
+                          session_id: str, cwd: str | None) -> str:
+    """Resume *session_id* on a live *conn* via ``session/resume``/``load``.
+
+    Returns the status constant on success and raises :class:`ACPError` when
+    the agent does not support resume/load or rejects the request.
+    """
+    sess_caps = (agent_caps or {}).get('sessionCapabilities') or {}
+    params = {
+        'sessionId': session_id,
+        'cwd': cwd or os.getcwd(),
+        'mcpServers': [],
+    }
+    if isinstance(sess_caps.get('resume'), dict):
+        await conn.send_request('session/resume', params)
+        return STATUS_RESUMED
+    if (agent_caps or {}).get('loadSession'):
+        await conn.send_request('session/load', params)
+        return STATUS_LOADED
+    raise ACPError(-32601, 'Agent does not support session resume or load')
+
+
+async def _reconnect_and_resume(state: DaemonState, cmd: list, env: dict,
+                                work_dir: str,
+                                session_id: str) -> tuple[bool, str | None]:
+    """Reconnect the daemon subprocess and resume *session_id*.
+
+    Fallback for agents that reject ``session/resume``/``session/load`` on an
+    already-initialized connection. Spawns a fresh subprocess and resumes the
+    session during init, tearing down the old subprocess only once the new one
+    is up (so a failed spawn leaves the daemon intact).
+    """
+    old_conn = state.get('conn')
+    old_proc = state.get('proc')
+
+    result = await spawn_and_init(
+        cmd, env, state.get('model'), session_id, work_dir,
+        permissions_config=state.get('permissions_config'),
+        auth=state.get('auth'),
+    )
+    if result is None:
+        return False, 'Could not resume session'
+    proc, conn, init_result = result
+
+    if old_conn is not None:
+        await old_conn.close()
+    if old_proc is not None:
+        await cleanup_process(old_proc, old_conn.writer if old_conn is not None else None)
+
+    new_sid, agent_caps = _finalize_daemon_connection(
+        conn, cmd, init_result, _make_usage_updater(state))
+    state.set(
+        proc=proc, conn=conn,
+        session_id=new_sid,
+        agent_caps=agent_caps,
+    )
+    if init_result.get('opened_via', STATUS_NEW) not in (STATUS_RESUMED, STATUS_LOADED):
+        return False, init_result.get('session_error') or 'Could not resume session'
+    return True, None
+
+
+def list_daemon_sessions(window_id: int, on_done: Callable) -> None:
+    """List sessions on the running daemon's live connection.
+
+    Calls *on_done(sessions, supported)* on the main thread. *sessions* is
+    ``None`` when the request failed; *supported* is ``False`` when the agent
+    does not advertise ``session/list``.
+    """
+    state = get_state(window_id)
+    if state is None or not state.is_running():
+        ui.on_main(lambda: on_done(None, False))
+        return
+    conn = state.get('conn')
+    loop = state.get('loop')
+    work_dir = state.get('work_dir')
+    if conn is None or loop is None or loop.is_closed():
+        ui.on_main(lambda: on_done(None, False))
+        return
+
+    agent_caps = state.get('agent_caps') or {}
+    sess_caps = agent_caps.get('sessionCapabilities') or {}
+    if not isinstance(sess_caps.get('list'), dict):
+        ui.on_main(lambda: on_done(None, False))
+        return
+
+    limit = load_settings().get('session_list_limit', 10) or 10
+
+    async def _fetch():
+        sessions: list = []
+        cursor = None
+        while len(sessions) < limit:
+            page, cursor = await list_sessions(conn, cwd=work_dir, cursor=cursor)
+            if not page:
+                break
+            sessions.extend(page)
+            if not cursor:
+                break
+        return sessions[:limit]
+
+    try:
+        future = asyncio.run_coroutine_threadsafe(_fetch(), loop)
+    except RuntimeError:
+        ui.on_main(lambda: on_done(None, False))
+        return
+
+    def _done(f):
+        try:
+            sessions = f.result()
+            ui.on_main(lambda: on_done(sessions, True))
+        except ACPError as exc:
+            supported = getattr(exc, 'code', None) != -32601
+            acp_log('switch_session', f'session/list failed: {exc!r}')
+            ui.on_main(lambda: on_done(None, supported))
+        except Exception as exc:
+            acp_log('switch_session', f'session/list failed: {exc!r}')
+            ui.on_main(lambda: on_done(None, True))
+
+    future.add_done_callback(_done)
+
+
+def _require_idle_daemon(window_id: int, busy_msg: str, on_done: Callable | None):
+    """Return idle daemon context or ``None`` after reporting the blocker."""
+    state = get_state(window_id)
+    if state is None or not state.is_running():
+        sublime.status_message('ACP: No agent session running in this window')
+        if on_done is not None:
+            on_done(False, 'No agent session running')
+        return None
+    if state.get('is_busy'):
+        sublime.status_message(busy_msg)
+        if on_done is not None:
+            on_done(False, 'Agent is busy')
+        return None
+    s = state.get('conn', 'loop', 'agent_cmd', 'env', 'work_dir')
+    conn, loop, cmd, env, work_dir = (
+        s['conn'], s['loop'], s['agent_cmd'], s['env'], s['work_dir'])
+    if conn is None or loop is None or loop.is_closed():
+        sublime.status_message('ACP: Daemon connection not available')
+        if on_done is not None:
+            on_done(False, 'Daemon connection not available')
+        return None
+    return state, conn, loop, cmd, env, work_dir
+
+
+def _submit_daemon_task(loop, task_factory: Callable, on_done: Callable | None):
+    """Submit a coroutine created by *task_factory*; return its future."""
+    try:
+        return asyncio.run_coroutine_threadsafe(task_factory(), loop)
+    except RuntimeError:
+        sublime.status_message('ACP: daemon already stopped')
+        if on_done is not None:
+            on_done(False, 'daemon already stopped')
+        return None
+
+
+def _finish_session_change(state, cmd, sid, ok, error, success_view, success_status,
+                           fail_view, fail_status, on_done) -> None:
+    if ok:
+        _update_agent_session_id(cmd, sid)
+        state.set(
+            session_id=sid,
+            usage_used=None, usage_size=None,
+            has_replied=False, last_activity=time.monotonic(),
+        )
+        output_view = state.get('output_view')
+        if output_view is not None:
+            ui.append_to_output_view(output_view, success_view(sid))
+        broadcast.erase_broadcast_status(STATUS_KEY_USAGE, _window_for_state(state))
+        sublime.status_message(success_status(sid))
+    else:
+        output_view = state.get('output_view')
+        if output_view is not None:
+            ui.append_to_output_view(output_view, fail_view(error))
+        sublime.status_message(fail_status(error))
+    if on_done is not None:
+        on_done(ok, error)
+
+
+def switch_daemon_session(window_id: int, session_id: str,
+                          on_done: Callable | None = None) -> None:
+    """Switch the running daemon to *session_id* in place.
+
+    Tries ``session/resume``/``session/load`` on the live connection and falls
+    back to reconnecting the subprocess when the agent rejects an in-place
+    switch. Calls *on_done(ok, error)* on the main thread.
+    """
+    ctx = _require_idle_daemon(
+        window_id, 'ACP: Wait for the current prompt to finish before switching', on_done)
+    if ctx is None:
+        return
+    state, conn, loop, cmd, env, work_dir = ctx
+
+    async def _do_switch():
+        state.set(is_busy=True)
+        try:
+            agent_caps = state.get('agent_caps') or {}
+            sess_caps = agent_caps.get('sessionCapabilities') or {}
+            if not (isinstance(sess_caps.get('resume'), dict) or agent_caps.get('loadSession')):
+                return False, 'Agent does not support session resume or load'
+            try:
+                await _resume_on_conn(conn, agent_caps, session_id, work_dir)
+                return True, None
+            except (ACPError, asyncio.TimeoutError, ConnectionError) as exc:
+                acp_log('switch_session', f'in-place resume failed ({exc!r}); reconnecting')
+            try:
+                return await _reconnect_and_resume(
+                    state, cmd, _build_env(env or {}), work_dir, session_id,
+                )
+            except Exception as exc:
+                acp_log('switch_session', f'reconnect failed: {exc!r}')
+                return False, str(exc)
+        finally:
+            state.set(is_busy=False)
+
+    future = _submit_daemon_task(loop, _do_switch, on_done)
+    if future is None:
+        return
+
+    def _done(f):
+        try:
+            ok, error = f.result()
+        except Exception as exc:
+            acp_log('switch_session', f'switch raised: {exc!r}')
+            ok, error = False, str(exc)
+
+        def _apply():
+            _finish_session_change(
+                state, cmd, session_id, ok, error,
+                lambda sid: f'\n*[Switched to session: {sid}]*\n',
+                lambda sid: f'ACP: Switched to session {sid[-8:]}',
+                lambda err: f'\n**[Could not switch session: {err or "unknown error"}]**\n',
+                lambda err: f'ACP: Could not switch session: {err or "unknown error"}',
+                on_done,
+            )
+
+        ui.on_main(_apply)
+
+    future.add_done_callback(_done)
+
+
+def new_daemon_session(window_id: int, on_done: Callable | None = None) -> None:
+    """Create a fresh session on the running daemon without respawning it.
+
+    Sends ``session/new`` on the live connection and resets usage/reply
+    tracking. Calls *on_done(ok, error)* on the main thread.
+    """
+    ctx = _require_idle_daemon(
+        window_id, 'ACP: Wait for the current prompt to finish', on_done)
+    if ctx is None:
+        return
+    state, conn, loop, cmd, _env, work_dir = ctx
+
+    async def _do_new():
+        state.set(is_busy=True)
+        try:
+            try:
+                new_sid, _, _, _ = await new_session(
+                    conn, {'cwd': work_dir, 'mcpServers': []})
+            except Exception as exc:
+                acp_log('new_session', f'session/new failed: {exc!r}')
+                return None, str(exc)
+            if not new_sid:
+                return None, 'Agent did not return a sessionId'
+            return new_sid, None
+        finally:
+            state.set(is_busy=False)
+
+    future = _submit_daemon_task(loop, _do_new, on_done)
+    if future is None:
+        return
+
+    def _done(f):
+        try:
+            new_sid, error = f.result()
+        except Exception as exc:
+            acp_log('new_session', f'new session raised: {exc!r}')
+            new_sid, error = None, str(exc)
+        ok = new_sid is not None
+
+        def _apply():
+            _finish_session_change(
+                state, cmd, new_sid, ok, error,
+                lambda sid: f'\n*[Started new session: {sid}]*\n',
+                lambda sid: f'ACP: Started new session {sid[-8:]}',
+                lambda err: f'\n**[Could not start new session: {err or "unknown error"}]**\n',
+                lambda err: f'ACP: Could not start new session: {err or "unknown error"}',
+                on_done,
+            )
+
+        ui.on_main(_apply)
+
+    future.add_done_callback(_done)
 
 
 def _daemon_thread_main(
@@ -760,13 +1091,12 @@ def _daemon_thread_main(
     timeout: float,
     output_view,
     settings,
-    session_id: str | None = None,
     permissions_config: dict | None = None,
     auth: bool | None = None,
 ) -> None:
     """Main daemon thread function for persistent agent sessions.
 
-    Spawns the agent process, initializes the session, and processes prompts
+    Spawns the agent process, initializes a new session, and processes prompts
     from an async queue until stopped.
 
     Args:
@@ -780,7 +1110,6 @@ def _daemon_thread_main(
         timeout: Request timeout in seconds.
         output_view: Output view for streaming responses.
         settings: Sublime settings dictionary.
-        session_id: Optional session ID to resume.
         permissions_config: Optional permissions configuration.
         auth: Optional authentication flag.
     """
@@ -788,7 +1117,7 @@ def _daemon_thread_main(
         'daemon_session',
         f'daemon thread started for "{agent_name}" (thread={threading.current_thread().ident})'
     )
-    acp_log('daemon_session', f'cmd={cmd}, session_id={session_id}')
+    acp_log('daemon_session', f'cmd={cmd}')
 
     state = get_state(window_id)
     if state is None:
@@ -804,38 +1133,23 @@ def _daemon_thread_main(
         current_env = _build_env(env)
         proc = conn = None
         acp_log('daemon_session', 'calling spawn_and_init()')
-        result = await spawn_and_init(cmd, current_env, model, session_id, work_dir,
+        result = await spawn_and_init(cmd, current_env, model, None, work_dir,
                                        permissions_config=permissions_config,
                                        auth=auth)
         if result is None:
             acp_log('daemon_session', 'spawn_and_init returned None - init failed')
-            if session_id:
-                _clear_agent_session_id(cmd)
             return None, 'error'
         proc, conn, init_result = result
         try:
-            sid = init_result['session_id']
-            opened_via = init_result.get('opened_via', STATUS_NEW)
+            sid, agent_caps = _finalize_daemon_connection(conn, cmd, init_result, usage_updater, strict=True)
             acp_log('daemon_session', f'spawn_and_init succeeded: session_id={init_result.get("session_id")}, opened_via={init_result.get("opened_via")}, proc={proc.pid if proc else None}')
-            _cache_daemon_agent_info(cmd, init_result)
-            _install_notification_handler(conn, cmd, usage_updater)
 
             state.set(
                 proc=proc, conn=conn,
                 session_id=sid, is_busy=False,
+                agent_caps=agent_caps, work_dir=work_dir,
+                model=model, permissions_config=permissions_config,
             )
-
-            session_error = init_result.get('session_error')
-            if session_id:
-                if opened_via in (STATUS_RESUMED, STATUS_LOADED):
-                    msg = f'\n*[Resumed session: {sid}]*\n\n'
-                elif session_error:
-                    msg = f'\n**[{session_error}]**\n*[Started new session]*\n\n'
-                else:
-                    msg = '\n*[Started new session]*\n\n'
-                ui.on_main(
-                    lambda v=output_view, m=msg: ui.append_to_output_view(v, m),
-                )
 
             first_prompt = True
             while True:
@@ -846,6 +1160,10 @@ def _daemon_thread_main(
                     break
 
                 prompt_text = item
+                # Read the live session fields each iteration so a switch or
+                # reconnect scheduled on this loop is picked up.
+                conn = state.get('conn')
+                sid = state.get('session_id')
                 state.set(is_busy=True, has_replied=False)
                 acp_log('daemon_session', f'processing prompt ({len(prompt_text)} chars)')
                 ui.on_main(
@@ -891,8 +1209,9 @@ def _daemon_thread_main(
                     dismiss_permission_prompt(window_id)
                     if ok in (PROMPT_SESSION_NOT_FOUND, PROMPT_CONNECTION_CLOSED):
                         proc, conn, sid = await _reconnect_daemon_session(
-                            cmd, current_env, model, sid, work_dir,
-                            output_view, permissions_config, auth, conn, proc,
+                            cmd, current_env, model, state.get('session_id'), work_dir,
+                            output_view, permissions_config, auth,
+                            state.get('conn'), state.get('proc'),
                             usage_updater,
                         )
                         if conn is None or sid is None:
@@ -915,14 +1234,17 @@ def _daemon_thread_main(
                     ui.on_main(
                         lambda s=summary, ov=output_view: ui.append_to_output_view(ov, s),
                     )
-                ui.append_turn_divider(output_view)
+                ui.append_turn_divider(
+                    output_view,
+                    enabled=settings.get('turn_dividers', True),
+                )
                 state.set(
                     is_busy=False, last_activity=time.monotonic(),
                 )
                 ui.on_main(
                     lambda ov=output_view: ui.reopen_daemon_input_panel(
                         cmd, model, timeout, system_prompt, state.get('session_id'),
-                        agent_name, ov.window(),
+                        agent_name, ov.window() if ov.window() is not None else False,
                         env=state.get('env') or {},
                         auth=state.get('auth'),
                     ),
@@ -931,13 +1253,15 @@ def _daemon_thread_main(
             acp_log('daemon_session', 'exiting prompt loop normally')
         finally:
             acp_log('daemon_session', 'entering _wrapper() finally - cleaning up')
+            conn = state.get('conn')
+            proc = state.get('proc')
             if conn is not None:
                 await conn.close()
             if proc is not None:
                 await cleanup_process(proc, conn.writer if conn is not None else None)
             acp_log('daemon_session', '_wrapper() finally - cleanup done')
 
-        return sid, 'new'
+        return state.get('session_id'), 'new'
 
     try:
         acp_log('daemon_session', 'running _wrapper() via loop.run_until_complete()')

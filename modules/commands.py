@@ -15,6 +15,7 @@ import sublime_plugin
 from ..protocol import acp_log
 from . import broadcast, cache, file_walker, ui
 from .config import (
+    CACHE_TTL_DEFAULT,
     DEFAULT_TIMEOUT,
     INPUT_VIEW_NAME,
     ONE_SHOT_PROMPT,
@@ -26,7 +27,6 @@ from .config import (
 )
 from .daemon import (
     DaemonState,
-    _build_env,
     _daemon_thread_main,
     _execute_prompt_daemon,
     _load_permissions,
@@ -35,7 +35,10 @@ from .daemon import (
     execute_prompt,
     get_state,
     is_unloading,
+    list_daemon_sessions,
+    new_daemon_session,
     set_state,
+    switch_daemon_session,
 )
 
 
@@ -82,8 +85,16 @@ def _pick_agent_command(window: sublime.Window, on_select: Callable) -> None:
 
 
 def _load_agents() -> dict:
-    """Load the persisted per-agent cache (session IDs, config options, slash commands)."""
-    return cache.load_agents(Path(sublime.cache_path()) / 'ACP')
+    """Load the persisted per-agent cache (session IDs, config options, slash commands).
+
+    Runs on the main thread, so it reads the configured ``cache_ttl`` itself;
+    background threads must use ``cache.load_agents`` with an explicit ttl
+    (or the default) and never touch settings under ``cache_lock``.
+    """
+    return cache.load_agents(
+        Path(sublime.cache_path()) / 'ACP',
+        ttl=settings().get('cache_ttl', CACHE_TTL_DEFAULT),
+    )
 
 
 def _format_local_time(value: Any) -> str | None:
@@ -169,8 +180,7 @@ class AcpCommand(sublime_plugin.WindowCommand):
         """Execute an ACP prompt or route to a running daemon.
 
         Args:
-            action: Optional action name for shortcut prompts. When ``'continue'``,
-                resumes the last session.
+            action: Optional action name for shortcut prompts.
         """
         if is_unloading():
             sublime.status_message('ACP is reloading, please retry in a moment')
@@ -186,10 +196,6 @@ class AcpCommand(sublime_plugin.WindowCommand):
                                                  force_selection=True),
                 _acp_input_kwargs(state),
             )
-            return
-
-        if action == 'continue':
-            self.window.run_command('acp_start', {'resume_session': True})
             return
 
         _pick_agent_command(self.window, lambda cmd_item: self.on_select(cmd_item, action))
@@ -357,34 +363,22 @@ class AcpStartCommand(sublime_plugin.WindowCommand):
         """Enable only when no daemon is running in this window."""
         return not _daemon_running(self.window.id())
 
-    def run(self, resume_session=False, session_id=None, agent=None):
-        """Start a persistent agent daemon in the current window.
-
-        Args:
-            resume_session: If ``True``, attempt to resume the last saved session.
-            session_id: Explicit session ID to resume, overriding the cache.
-            agent: Pre-selected agent command dict, skipping the agent picker.
-        """
+    def run(self):
+        """Start a persistent agent daemon in the current window."""
         if is_unloading():
             sublime.status_message('ACP is reloading, please retry in a moment')
             return
-        self._resume_session = resume_session
-        self._session_id = session_id
-        self._agent = agent
         window_id = self.window.id()
         state = get_state(window_id)
         if state is not None and state.is_running():
             old_agent = state.get('agent_name') or 'unknown'
             sublime.status_message(f'Stopping {old_agent}...')
-            _stop_daemon_async(window_id, on_done=self._do_start)
+            _stop_daemon_async(
+                window_id,
+                on_done=lambda: _pick_agent_command(self.window, self.on_select),
+            )
             return
 
-        self._do_start()
-
-    def _do_start(self):
-        if getattr(self, '_agent', None):
-            self.on_select(self._agent)
-            return
         _pick_agent_command(self.window, self.on_select)
 
     def on_select(self, cmd_item):
@@ -412,12 +406,6 @@ class AcpStartCommand(sublime_plugin.WindowCommand):
         agent_name = cmd_item.get('title', cmd[0])
         work_dir = ui.resolve_work_dir(self.window, self.window.active_view())
 
-        # If resuming, try to pick up the last saved session
-        session_id = self._session_id
-        if session_id is None and self._resume_session:
-            agents = _load_agents()
-            session_id = agents.get(cmd[0], {}).get('last_session_id')
-
         # Create the output view early so the spinner and errors have a target
         output_view = ui.create_output_view(self.window, agent_name, role='daemon')
         ui.open_split_for_output(self.window, output_view)
@@ -443,7 +431,6 @@ class AcpStartCommand(sublime_plugin.WindowCommand):
             target=_daemon_thread_main,
             args=(window_id, cmd, agent_name, env, model, system_prompt,
                   work_dir, timeout, output_view, settings(),
-                  session_id,
                   _load_permissions(settings()),
                   auth),
             daemon=True,
@@ -485,76 +472,46 @@ class AcpStartCommand(sublime_plugin.WindowCommand):
         )
 
 
-class AcpContinueSessionCommand(sublime_plugin.WindowCommand):
-    """List recent sessions and resume the selected one as a daemon."""
+class AcpSwitchSessionCommand(sublime_plugin.WindowCommand):
+    """List recent sessions and switch the running daemon to the selected one."""
 
     def is_enabled(self):
-        """Enable only when no daemon is running in this window."""
-        return not _daemon_running(self.window.id())
+        """Enable only while the daemon is running and idle."""
+        state = get_state(self.window.id())
+        return (
+            state is not None and state.is_running()
+            and not state.get('is_busy')
+        )
 
     def run(self):
-        """Pick an agent, then list its recent sessions for the work dir."""
+        """List the active agent's recent sessions and switch on selection."""
         if is_unloading():
             sublime.status_message('ACP is reloading, please retry in a moment')
             return
-        _pick_agent_command(self.window, self._on_agent)
-
-    def _on_agent(self, cmd_item):
-        if cmd_item is None:
+        window_id = self.window.id()
+        state = get_state(window_id)
+        if state is None or not state.is_running():
+            sublime.status_message('ACP: No agent session running in this window')
             return
-        cmd_str = cmd_item.get('cmd')
-        if not cmd_str:
-            sublime.error_message("ACP: agent entry is missing a 'cmd' value.")
+        if state.get('is_busy'):
+            sublime.status_message('ACP: Wait for the current prompt to finish before switching')
             return
-        cmd = [cmd_str] + cmd_item.get('args', [])
-        env = _build_env(cmd_item.get('env', {}))
-        work_dir = ui.resolve_work_dir(self.window, self.window.active_view())
-        limit = settings().get('session_list_limit', 10) or 10
-        self._listing_sessions = True
-        self._refresh_listing_status()
-        threading.Thread(
-            target=self._fetch,
-            args=(cmd_item, cmd, env, work_dir, limit),
-            daemon=True,
-        ).start()
+        list_daemon_sessions(window_id, self._on_listed)
 
-    def _refresh_listing_status(self):
-        """Re-post the listing status until the fetch completes."""
-        if not getattr(self, '_listing_sessions', False):
-            return
-        sublime.status_message('ACP: listing sessions...')
-        sublime.set_timeout(self._refresh_listing_status, 2000)
-
-    def _fetch(self, cmd_item, cmd, env, work_dir, limit):
-        from .rpc import fetch_sessions
-        try:
-            sessions, supported = asyncio.run(fetch_sessions(cmd, env, work_dir, limit))
-        except Exception as exc:
-            from ..protocol import acp_log
-            acp_log('rpc', f'continue: fetch_sessions raised: {exc!r}')
-            sessions, supported = None, False
-        sublime.set_timeout(lambda: self._on_fetched(cmd_item, cmd, sessions, supported), 0)
-
-    def _on_fetched(self, cmd_item, cmd, sessions, supported):
-        self._listing_sessions = False
-        if sessions is None or not supported:
-            agents = _load_agents()
-            session_id = agents.get(cmd[0], {}).get('last_session_id')
-            if session_id:
-                self.window.run_command('acp_start', {'resume_session': True, 'session_id': session_id, 'agent': cmd_item})
-                return
-            if sessions is None:
-                sublime.status_message('ACP: could not list sessions (agent failed to start)')
+    def _on_listed(self, sessions, supported):
+        if sessions is None:
+            if supported:
+                sublime.status_message('ACP: could not list sessions')
             else:
-                sublime.status_message('ACP: agent does not support session/list and no cached session found')
+                sublime.status_message('ACP: agent does not support session/list')
             return
         if not sessions:
             sublime.status_message('ACP: no previous sessions found')
             return
         self._sessions = sessions
-        self._cmd_item = cmd_item
-        items = [self._label(s) for s in sessions]
-        self.window.show_quick_panel(items, self._on_pick, placeholder='Select session to continue')
+        items = [['+ Start new session', 'Start fresh without restarting the agent']]
+        items.extend(self._label(s) for s in sessions)
+        self.window.show_quick_panel(items, self._on_pick, placeholder='Select session to switch to')
 
     @staticmethod
     def _label(s):
@@ -569,10 +526,26 @@ class AcpContinueSessionCommand(sublime_plugin.WindowCommand):
     def _on_pick(self, index):
         if index == -1:
             return
-        session_id = (self._sessions or [])[index].get('sessionId')
+        if index == 0:
+            new_daemon_session(self.window.id(), on_done=self._on_switched)
+            return
+        session_id = (self._sessions or [])[index - 1].get('sessionId')
         if not session_id:
             return
-        self.window.run_command('acp_start', {'resume_session': True, 'session_id': session_id, 'agent': self._cmd_item})
+        switch_daemon_session(self.window.id(), session_id, on_done=self._on_switched)
+
+    def _on_switched(self, ok, error=None):
+        """Focus the input panel after a switch, reopening it if missing."""
+        if not ok:
+            return
+        state = get_state(self.window.id())
+        if state is None:
+            return
+        input_view = state.get('input_view')
+        if input_view is not None and input_view.window() is not None:
+            self.window.focus_view(input_view)
+        else:
+            self.window.run_command('acp_input', _acp_input_kwargs(state))
 
 
 class AcpStopCommand(sublime_plugin.WindowCommand):

@@ -35,7 +35,7 @@ When you are going to iterate - "make this change, then fix the tests, then show
 5. **Switch model, mode, or thought level mid-session.** With *ACP: Switch Model* / *ACP: Switch Mode* / *ACP: Switch Thought Level* a quick panel lists the options the agent advertises (Opencode, Pi, Claude Code, Droid expose model switching; Opencode and Claude Code also expose modes like `build`/`plan`; Opencode, Pi, Droid, Claude Code, and Kimi expose thought-level switching). The current value is marked with ✓; focus returns to the input panel after you choose.
 6. **Interrupt a long turn.** `Ctrl+Break` (or *ACP: Interrupt Current Prompt*) cancels the in-flight prompt while keeping the connection and session alive - no respawn, no lost context. A marker line is appended to the chat tab.
 7. **Stop, or let it idle.** *ACP: Stop Session* terminates the daemon gracefully. If you simply stop typing, the daemon auto-terminates after `daemon_idle_timeout` seconds of inactivity (default 900 s; set to `0` to disable). Closing the window that owns the daemon stops it too.
-8. **Pick up where you left off.** *ACP: Continue Session* lists the agent's recent sessions for the current working directory (via `session/list`, newest first, capped by `session_list_limit`) - pick one to resume, so a chat survives a restart. Agents without `session/list` support fall back to the last cached session.
+8. **Jump between sessions.** While a daemon is running and idle, *ACP: Switch Session* lists the agent's recent sessions for the current working directory (via `session/list` on the live connection, newest first, capped by `session_list_limit`) - pick one to switch the daemon to it. Starting a session always begins fresh.
 
 ```mermaid
 sequenceDiagram
@@ -89,7 +89,7 @@ sequenceDiagram
 | Switch session mode (build/plan)           | *ACP: Switch Mode* (if the agent advertises the option)                                                |
 | Change reasoning effort mid-session        | *ACP: Switch Thought Level* (if the agent advertises the option)                                       |
 | Cancel a runaway turn                      | `Ctrl+Break` - interrupt without killing the session                                                   |
-| Reuse yesterday's context                  | *ACP: Continue Session* (recent sessions via `session/list`)                                           |
+| Jump to another session                    | *ACP: Switch Session* (recent sessions via `session/list`, daemon only)                                |
 | Let writes through automatically           | add the tool kind to `permissions.auto_allow` (e.g. `"write*"`) - see [permissions.md](permissions.md) |
 
 ## Tips & tricks
@@ -103,13 +103,13 @@ sequenceDiagram
 
 ## Where the code lives
 
-| File                     | Responsibility in this walkthrough                                             |
-| ------------------------ | ------------------------------------------------------------------------------ |
-| `modules/commands.py`    | the 7 ACP commands: prompt, start/stop, interrupt, continue, switch model/mode |
-| `modules/daemon.py`      | daemon lifecycle, prompt queue, idle timer                                     |
-| `modules/permissions.py` | auto-allow/reject and the permission quick panel                               |
-| `modules/completions.py` | `@`/`/` completions in the input panel                                         |
-| `modules/cache.py`       | last session ID per agent (fallback when the agent lacks `session/list`)       |
+| File                     | Responsibility in this walkthrough                                                       |
+| ------------------------ | ---------------------------------------------------------------------------------------- |
+| `modules/commands.py`    | the ACP commands: prompt, start/stop, interrupt, switch session/model/mode/thought level |
+| `modules/daemon.py`      | daemon lifecycle, prompt queue, idle timer                                               |
+| `modules/permissions.py` | auto-allow/reject and the permission quick panel                                         |
+| `modules/completions.py` | `@`/`/` completions in the input panel                                                   |
+| `modules/cache.py`       | persisted session metadata (config options, slash commands, last session ID)             |
 
 ## Related docs
 

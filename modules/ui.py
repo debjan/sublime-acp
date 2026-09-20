@@ -205,9 +205,11 @@ def append_to_output_view(view: sublime.View, text: str) -> None:
     on_main(lambda: _append_text(view, text))
 
 
-def append_turn_divider(view: sublime.View) -> None:
+def append_turn_divider(view: sublime.View, enabled: bool | None = None) -> None:
     """Append a markdown horizontal rule marking the end of an agent turn."""
-    if dividers_enabled():
+    if enabled is None:
+        enabled = dividers_enabled()
+    if enabled:
         append_to_output_view(view, TURN_DIVIDER)
 
 
@@ -226,7 +228,19 @@ def append_prompt_turn(view: sublime.View, prompt: str,
 
 def reopen_daemon_input_panel(cmd, model, timeout, system_prompt, session_id, agent_name, daemon_window=None, env=None, auth=None):
     """Re-open the prompt input panel so the user can continue chatting."""
-    if window := daemon_window or sublime.active_window():
+    window = daemon_window
+    if not window:
+        if daemon_window is not None:
+            return  # owning view/window gone - never fall back to another window
+        window = sublime.active_window()
+        try:
+            if window.id() not in [w.id() for w in sublime.windows()]:
+                return  # owning window closed - never fall back to another window
+        except Exception:
+            return
+    else:
+        window = sublime.active_window()
+    if window is not None:
         window.run_command('acp_input', {
             'cmd': cmd,
             'model': model,

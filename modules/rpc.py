@@ -20,7 +20,6 @@ from ..protocol import (
     Connection,
     acp_log,
     cleanup_process,
-    list_sessions,
     resolve_session,
     spawn_subprocess,
 )
@@ -186,7 +185,7 @@ def _format_blockquote(text: str) -> str:
     if not text or not text.strip():
         return ''
     lines = text.split('\n')
-    quoted = [f'> {line}' for line in lines]
+    quoted = (f'> {line}' for line in lines)
     return '\n'.join(quoted)
 
 
@@ -660,10 +659,8 @@ async def list_config(cmd: list[str], env: dict | None = None, command_timeout: 
         on_notification,
         _make_request_callback(on_request),
     ):
-        try:
+        with contextlib.suppress(asyncio.TimeoutError):
             await asyncio.wait_for(commands_event.wait(), timeout=command_timeout)
-        except asyncio.TimeoutError:
-            pass
 
     if collected_commands is not None:
         config['commands'] = collected_commands
@@ -731,66 +728,159 @@ async def spawn_and_init(
         raise
 
 
-async def fetch_sessions(
-    cmd: list[str],
-    env: dict | None = None,
-    cwd: str | None = None,
-    limit: int = 10,
-) -> tuple[list[dict[str, Any]] | None, bool]:
-    """Fetch recent sessions via ``session/list``.
+class _StreamState:
+    """Mutable streaming state for one ``session/prompt`` turn."""
 
-    Spawns the agent, runs ``initialize`` only (no session is created),
-    checks ``sessionCapabilities.list``, and pages through ``session/list``
-    filtered by *cwd* up to *limit* entries.
+    def __init__(self) -> None:
+        self.thought_buf: list[str] = []
+        self.at_turn_start = True
+        self.pending_trailing = ''
 
-    Args:
-        cmd: Agent command list.
-        env: Optional environment variables.
-        cwd: Working directory filter for ``session/list``.
-        limit: Maximum number of sessions to return.
 
-    Returns:
-        ``(sessions, supported)`` where *supported* is ``False`` when the
-        agent does not advertise ``sessionCapabilities.list`` (or init
-        failed, in which case *sessions* is ``None``).
-    """
-    proc, reader, writer = await spawn_subprocess(cmd, env, cwd)
-    conn = Connection(reader, writer)
-    conn.request_callback = _make_request_callback(
-        lambda mid, method, params: _handle_agent_request(
-            conn, mid, method, params, cwd or os.getcwd(), None, 'one-shot',
-        ),
+def _emit_text(state: _StreamState, chunk: str, thoughts_mode: str, callback: Any | None) -> None:
+    had_thoughts = _flush_thoughts(state.thought_buf, thoughts_mode, callback)
+    if thoughts_mode in ('enabled', 'console') and had_thoughts:
+        chunk = '\n' + chunk
+        state.at_turn_start = False
+    elif state.at_turn_start:
+        chunk = chunk.lstrip('\r\n')
+        if not chunk:
+            return
+        state.at_turn_start = False
+    chunk = state.pending_trailing + chunk
+    stripped = chunk.rstrip('\r\n')
+    state.pending_trailing = chunk[len(stripped):]
+    chunk = stripped
+    if not chunk:
+        return
+    if callback:
+        callback(chunk)
+    else:
+        sys.stdout.write(chunk)
+        sys.stdout.flush()
+
+
+def _dispatch_stream_notification(
+    state: _StreamState,
+    method: str,
+    params: dict,
+    thoughts_mode: str,
+    callback: Any | None,
+    on_commands: Any | None,
+    on_usage: Any | None,
+) -> None:
+    if method != 'session/update':
+        return
+    matched, commands = _extract_available_commands(method, params)
+    if matched:
+        acp_log('rpc', f'send_prompt_and_stream: available_commands_update ({len(commands or [])} commands)')
+        if on_commands:
+            on_commands(commands)
+        return
+    usage_matched, used, size = _extract_usage_update(method, params)
+    if usage_matched:
+        acp_log('rpc', f'send_prompt_and_stream: usage_update (used={used}, size={size})')
+        if on_usage:
+            on_usage(used, size)
+        return
+    chunks = _handle_session_update_notification({'method': method, 'params': params})
+    for chunk in chunks:
+        if isinstance(chunk, tuple) and chunk[0] == '__thought__':
+            if thoughts_mode != 'disabled':
+                state.thought_buf.append(chunk[1])
+        else:
+            _emit_text(state, chunk, thoughts_mode, callback)
+
+
+async def _handle_stream_request(
+    conn: Connection,
+    msg_id: int,
+    method: str,
+    params: dict,
+    ws_root: str,
+    permissions_config: dict | None,
+    mode: str,
+    on_permission_prompt: Any | None,
+) -> None:
+    handled = await _handle_agent_request(
+        conn, msg_id, method, params,
+        ws_root, permissions_config, mode, on_permission_prompt,
     )
+    if not handled and method == 'terminal/create':
+        await conn.respond_with_error(msg_id, -32601, 'Terminal not supported')
+
+
+async def _send_prompt_request(
+    conn: Connection,
+    session_id: str,
+    prompt_blocks: list[dict[str, str]],
+    callback_timeout: float,
+    callback: Any | None,
+) -> tuple[Any | None, str | None]:
     try:
-        try:
-            init = await conn.send_request('initialize', _INITIALIZE_PARAMS)
-        except (ACPError, asyncio.TimeoutError, ConnectionError) as exc:
-            acp_log('rpc', f'fetch_sessions: initialize failed for {cmd}: {exc!r}')
-            return None, False
-        caps = (init.get('agentCapabilities') or {}).get('sessionCapabilities') or {}
-        if not isinstance(caps.get('list'), dict):
-            return [], False
-        sessions: list[dict[str, Any]] = []
-        cursor: str | None = None
-        while len(sessions) < limit:
-            try:
-                page, cursor = await list_sessions(conn, cwd=cwd, cursor=cursor)
-            except ACPError as exc:
-                if not sessions and getattr(exc, 'code', None) == -32601:
-                    return [], False
-                acp_log('rpc', f'fetch_sessions: session/list failed: {exc!r}')
-                break
-            except (asyncio.TimeoutError, ConnectionError) as exc:
-                acp_log('rpc', f'fetch_sessions: session/list failed: {exc!r}')
-                break
-            if not page:
-                break
-            sessions.extend(page)
-            if not cursor:
-                break
-        return sessions[:limit], True
-    finally:
-        await _close_connection(proc, conn)
+        result = await conn.send_request('session/prompt', {
+            'sessionId': session_id,
+            'prompt': prompt_blocks,
+        }, timeout=callback_timeout)
+        return result, None
+    except ACPError as exc:
+        acp_log('rpc', f'send_prompt_and_stream: ACPError: {exc}')
+        if callback:
+            callback(f'**[Agent error]:** {exc}')
+        else:
+            sys.stdout.write(f'**[Agent error]:** {exc}\n')
+            sys.stdout.flush()
+        if 'session not found' in exc.message.lower():
+            return None, PROMPT_SESSION_NOT_FOUND
+        return None, PROMPT_ERROR
+    except asyncio.TimeoutError:
+        acp_log('rpc', f'send_prompt_and_stream: timeout after {callback_timeout}s of inactivity')
+        if callback:
+            callback(f'*[Response stream timed out after {callback_timeout}s of inactivity]*')
+        with contextlib.suppress(Exception):
+            await conn.send_notification('session/cancel', {'sessionId': session_id})
+            await conn.send_notification('$/cancel_request', {'requestId': conn.last_request_id})
+        return None, PROMPT_TIMEOUT
+    except ConnectionError as exc:
+        acp_log('rpc', f'send_prompt_and_stream: agent closed connection: {exc}')
+        return None, PROMPT_CONNECTION_CLOSED
+    except asyncio.CancelledError:
+        acp_log('rpc', 'send_prompt_and_stream: prompt cancelled')
+        return None, PROMPT_CANCELLED
+
+
+def _flush_stream_tail(
+    state: _StreamState,
+    result: Any,
+    thoughts_mode: str,
+    callback: Any | None,
+) -> None:
+    flushed = ''
+    if thoughts_mode == 'enabled':
+        flushed = _flush_thought_buffer(state.thought_buf)
+    elif thoughts_mode == 'console':
+        flushed = ''.join(state.thought_buf)
+        state.thought_buf.clear()
+        if flushed:
+            sys.stderr.write(flushed + '\n')
+            sys.stderr.flush()
+    texts = _handle_prompt_result({'result': result})
+    all_text = '\n'.join(texts)
+    if thoughts_mode == 'enabled' and flushed and all_text:
+        all_text = flushed + '\n' + all_text
+    elif thoughts_mode == 'enabled' and flushed:
+        all_text = flushed
+    if state.pending_trailing and all_text:
+        all_text = state.pending_trailing + all_text
+    state.pending_trailing = ''
+    if state.at_turn_start:
+        all_text = all_text.lstrip('\r\n')
+    if all_text := all_text.rstrip('\r\n'):
+        if callback:
+            callback(all_text)
+        else:
+            sys.stdout.write(all_text)
+            sys.stdout.flush()
 
 
 async def send_prompt_and_stream(
@@ -859,61 +949,18 @@ async def send_prompt_and_stream(
     acp_log('rpc', f'send_prompt_and_stream: sid={session_id}, mode={mode}, timeout={callback_timeout}')
 
     ws_root = workspace_root or os.getcwd()
-    thought_buf: list[str] = []
-    at_turn_start = True
-    pending_trailing = ''
+    state = _StreamState()
 
     def on_notification(method: str, params: dict) -> None:
-        nonlocal thought_buf, at_turn_start, pending_trailing
-        if method != 'session/update':
-            return
-        matched, commands = _extract_available_commands(method, params)
-        if matched:
-            acp_log('rpc', f'send_prompt_and_stream: available_commands_update ({len(commands or [])} commands)')
-            if on_commands:
-                on_commands(commands)
-            return
-        usage_matched, used, size = _extract_usage_update(method, params)
-        if usage_matched:
-            acp_log('rpc', f'send_prompt_and_stream: usage_update (used={used}, size={size})')
-            if on_usage:
-                on_usage(used, size)
-            return
-        chunks = _handle_session_update_notification({'method': method, 'params': params})
-        for chunk in chunks:
-            if isinstance(chunk, tuple) and chunk[0] == '__thought__':
-                if thoughts_mode != 'disabled':
-                    thought_buf.append(chunk[1])
-            else:
-                had_thoughts = _flush_thoughts(thought_buf, thoughts_mode, callback)
-                if thoughts_mode in ('enabled', 'console') and had_thoughts:
-                    chunk = '\n' + chunk
-                    at_turn_start = False
-                elif at_turn_start:
-                    chunk = chunk.lstrip('\r\n')
-                    if not chunk:
-                        continue
-                    at_turn_start = False
-                chunk = pending_trailing + chunk
-                stripped = chunk.rstrip('\r\n')
-                pending_trailing = chunk[len(stripped):]
-                chunk = stripped
-                if not chunk:
-                    continue
-                if callback:
-                    callback(chunk)
-                else:
-                    sys.stdout.write(chunk)
-                if not callback:
-                    sys.stdout.flush()
+        _dispatch_stream_notification(
+            state, method, params, thoughts_mode, callback, on_commands, on_usage,
+        )
 
     async def on_request(msg_id: int, method: str, params: dict) -> None:
-        handled = await _handle_agent_request(
+        await _handle_stream_request(
             conn, msg_id, method, params,
             ws_root, permissions_config, mode, on_permission_prompt,
         )
-        if not handled and method == 'terminal/create':
-            await conn.respond_with_error(msg_id, -32601, 'Terminal not supported')
 
     prompt_blocks: list[dict[str, str]] = []
     if system_prompt:
@@ -924,63 +971,13 @@ async def send_prompt_and_stream(
         on_notification,
         _make_request_callback(on_request),
     ):
-        try:
-            result = await conn.send_request('session/prompt', {
-                'sessionId': session_id,
-                'prompt': prompt_blocks,
-            }, timeout=callback_timeout)
-        except ACPError as exc:
-            acp_log('rpc', f'send_prompt_and_stream: ACPError: {exc}')
-            if callback:
-                callback(f'**[Agent error]:** {exc}')
-            else:
-                sys.stdout.write(f'**[Agent error]:** {exc}\n')
-                sys.stdout.flush()
-            if 'session not found' in exc.message.lower():
-                return PROMPT_SESSION_NOT_FOUND
-            return PROMPT_ERROR
-        except asyncio.TimeoutError:
-            acp_log('rpc', f'send_prompt_and_stream: timeout after {callback_timeout}s of inactivity')
-            if callback:
-                callback(f'*[Response stream timed out after {callback_timeout}s of inactivity]*')
-            with contextlib.suppress(Exception):
-                await conn.send_notification('session/cancel', {'sessionId': session_id})
-                await conn.send_notification('$/cancel_request', {'requestId': conn.last_request_id})
-            return PROMPT_TIMEOUT
-        except ConnectionError as exc:
-            acp_log('rpc', f'send_prompt_and_stream: agent closed connection: {exc}')
-            return PROMPT_CONNECTION_CLOSED
-        except asyncio.CancelledError:
-            acp_log('rpc', 'send_prompt_and_stream: prompt cancelled')
-            return PROMPT_CANCELLED
+        result, status = await _send_prompt_request(
+            conn, session_id, prompt_blocks, callback_timeout, callback,
+        )
+        if status is not None:
+            return status
 
-    flushed = ''
-    if thoughts_mode == 'enabled':
-        flushed = _flush_thought_buffer(thought_buf)
-    elif thoughts_mode == 'console':
-        flushed = ''.join(thought_buf)
-        thought_buf.clear()
-        if flushed:
-            sys.stderr.write(flushed + '\n')
-            sys.stderr.flush()
-    texts = _handle_prompt_result({'result': result})
-    all_text = '\n'.join(texts)
-    if thoughts_mode == 'enabled' and flushed and all_text:
-        all_text = flushed + '\n' + all_text
-    elif thoughts_mode == 'enabled' and flushed:
-        all_text = flushed
-    if pending_trailing and all_text:
-        all_text = pending_trailing + all_text
-    pending_trailing = ''
-    if at_turn_start:
-        all_text = all_text.lstrip('\r\n')
-    all_text = all_text.rstrip('\r\n')
-    if all_text:
-        if callback:
-            callback(all_text)
-        else:
-            sys.stdout.write(all_text)
-            sys.stdout.flush()
+    _flush_stream_tail(state, result, thoughts_mode, callback)
 
     acp_log('rpc', 'send_prompt_and_stream: done')
     return PROMPT_OK

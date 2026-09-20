@@ -6,13 +6,13 @@ from .modules import file_walker
 from .modules.commands import (
     AcpActionsCommand,
     AcpCommand,
-    AcpContinueSessionCommand,
     AcpInputCommand,
     AcpInterruptCommand,
     AcpStartCommand,
     AcpStopCommand,
     AcpSwitchModeCommand,
     AcpSwitchModelCommand,
+    AcpSwitchSessionCommand,
     AcpSwitchThoughtLevelCommand,
 )
 from .modules.completions import AcpFileCompletionListener

@@ -13,6 +13,7 @@ from .config import (
 )
 from .daemon import _stop_daemon_async
 from .daemon import get_state as _get_state
+from .permissions import dismiss_permission_prompt
 
 _INHIBIT = sublime.INHIBIT_WORD_COMPLETIONS | sublime.INHIBIT_EXPLICIT_COMPLETIONS
 
@@ -197,6 +198,7 @@ class AcpFileCompletionListener(sublime_plugin.EventListener):
     def on_pre_close_window(self, window):
         """Auto-stop the daemon when the window that started it is closed."""
         window_id = window.id()
+        dismiss_permission_prompt(window_id)
         state = _get_state(window_id)
         if state is None or not state.is_running():
             return

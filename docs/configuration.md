@@ -55,7 +55,7 @@ With more than one entry, a quick panel lets you pick; a single entry is auto-se
 | `timeout`                   | `600`   | Seconds to wait for *any* agent output before cancelling a turn. The clock resets on every streamed text, thought, tool call, or file edit - long multi-edit turns won't be cut off. |
 | `permission_prompt_timeout` | `300`   | Hard cap in seconds for an open permission prompt before it is denied (`0` = wait forever). Prompts queue per window.                                                                |
 | `cache_ttl`                 | `300`   | Seconds before the `@`-completions file cache expires (`0` = always refresh)                                                                                                         |
-| `session_list_limit`        | `10`    | Max sessions shown by *ACP: Continue Session* (`session/list`, filtered by cwd)                                                                                                      |
+| `session_list_limit`        | `10`    | Max sessions shown by *ACP: Switch Session* (`session/list`, filtered by cwd)                                                                                                        |
 
 ### Thoughts
 

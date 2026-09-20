@@ -90,7 +90,7 @@
     //   "disabled" - thoughts are dropped; view shows the reply only
     "thoughts": "enabled",
 
-    // Maximum sessions shown by "ACP: Continue Session" (session/list)
+    // Maximum sessions shown by "ACP: Switch Session" (session/list)
     "session_list_limit": 10,
 
     // Seconds of inactivity before auto-terminating the daemon (0 = disabled)

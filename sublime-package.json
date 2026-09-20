@@ -1,0 +1,177 @@
+{
+  "contributions": {
+    "settings": [
+      {
+        "file_patterns": ["/ACP.sublime-settings"],
+        "schema": {
+          "type": "object",
+          "properties": {
+            "commands": {
+              "type": "array",
+              "description": "Agent commands to show in the quick panel. If more than one item is provided, the quick panel will show for selecting the agent.",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": "string",
+                    "description": "Display name for the agent in the quick panel."
+                  },
+                  "cmd": {
+                    "type": "string",
+                    "description": "Command or executable to spawn as the agent subprocess."
+                  },
+                  "args": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Arguments passed to the command."
+                  },
+                  "auth": {
+                    "type": "boolean",
+                    "description": "Whether the agent requires authentication. When false, skips auth prompts."
+                  },
+                  "env": {
+                    "type": "object",
+                    "additionalProperties": { "type": "string" },
+                    "description": "Extra environment variables passed to the agent subprocess."
+                  },
+                  "model": {
+                    "type": "string",
+                    "description": "Model identifier to use with the agent (e.g. 'custom:OpenRouter-0')."
+                  }
+                },
+                "required": ["title", "cmd"]
+              }
+            },
+            "ignore": {
+              "type": "object",
+              "description": "Patterns for autocompletion filtering (besides .gitignore).",
+              "properties": {
+                "folders": {
+                  "type": "array",
+                  "items": { "type": "string" },
+                  "description": "Folder names to exclude from @-file completions."
+                },
+                "extensions": {
+                  "type": "array",
+                  "items": { "type": "string" },
+                  "description": "File extensions to exclude from @-file completions."
+                }
+              }
+            },
+            "actions": {
+              "type": "array",
+              "description": "Custom quick actions shown in the prompt panel.",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": "string",
+                    "description": "Label displayed in the quick panel."
+                  },
+                  "prompt": {
+                    "type": "string",
+                    "description": "Prompt text sent to the agent when this action is selected."
+                  }
+                },
+                "required": ["title", "prompt"]
+              }
+            },
+            "system_prompt": {
+              "type": ["string", "null"],
+              "description": "Custom system prompt prepended to every agent conversation."
+            },
+            "attach_selection": {
+              "type": "boolean",
+              "default": false,
+              "description": "Automatically attach the current selection as context (@path:line-line or a code block)."
+            },
+            "turn_dividers": {
+              "type": "boolean",
+              "default": true,
+              "description": "Append markdown dividers (---) after each user prompt and agent reply."
+            },
+            "context_usage": {
+              "type": "boolean",
+              "default": true,
+              "description": "Show context token usage in the status bar (e.g. ctx 27% (53k/200k))."
+            },
+            "git_turn_summary": {
+              "oneOf": [
+                {
+                  "type": "string",
+                  "enum": ["diff", "counts"],
+                  "description": "Git-based 'Changed files' summary after each agent turn: 'diff' for filenames + per-file diff fences, 'counts' for filenames with change counts only."
+                },
+                {
+                  "type": "boolean",
+                  "enum": [false],
+                  "description": "Disable the git turn summary entirely."
+                }
+              ],
+              "default": "counts"
+            },
+            "thoughts": {
+              "type": "string",
+              "enum": ["enabled", "console", "disabled"],
+              "default": "enabled",
+              "description": "How agent thought chunks (thinking...) are surfaced: 'enabled' renders in output as blockquotes, 'console' sends to Sublime console (stderr), 'disabled' drops them."
+            },
+            "session_list_limit": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 10,
+              "description": "Maximum sessions shown by 'ACP: Switch Session' (session/list)."
+            },
+            "daemon_idle_timeout": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 900,
+              "description": "Seconds of inactivity before auto-terminating the daemon. 0 = disabled."
+            },
+            "timeout": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 600,
+              "description": "Idle timeout in seconds: how long to wait for the agent to produce any output before the turn is timed out and cancelled. The clock resets on any agent activity."
+            },
+            "permission_prompt_timeout": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 300,
+              "description": "Hard cap in seconds for an open permission prompt. After this the prompt is denied and the turn continues. 0 = wait forever."
+            },
+            "cache_ttl": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 300,
+              "description": "Seconds before @-file completions and agent-info caches expire. 0 = always refresh."
+            },
+            "permissions": {
+              "type": "object",
+              "description": "Permission control for agent tool calls and host-fs operations.",
+              "properties": {
+                "auto_allow": {
+                  "type": "array",
+                  "items": { "type": "string" },
+                  "default": ["read*"],
+                  "description": "Glob patterns for tool call kinds to auto-approve (e.g. 'read*'). fs/read_text_file maps to kind 'read_file'; fs/write_text_file maps to kind 'write_file'."
+                },
+                "auto_reject": {
+                  "type": "array",
+                  "items": { "type": "string" },
+                  "default": [],
+                  "description": "Glob patterns for tool call kinds to auto-reject. Takes priority over auto_allow."
+                }
+              }
+            },
+            "debug": {
+              "type": "boolean",
+              "default": false,
+              "description": "Enable debug logging to the Sublime console (via stderr)."
+            }
+          }
+        }
+      }
+    ]
+  }
+}

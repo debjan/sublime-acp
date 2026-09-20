@@ -33,9 +33,9 @@ git clone https://github.com/debjan/sublime-acp ACP
 
 The daemon auto-terminates after 15 minutes of inactivity (configurable).
 
-### Continue a previous session
+### Switch sessions mid-session
 
-- `Ctrl+Shift+P` -> **"ACP: Continue Session"** - pick an agent, then pick from its recent sessions (via `session/list`, filtered by the current working directory, capped by `session_list_limit`). Agents without `session/list` support fall back to the last cached session.
+- `Ctrl+Shift+P` -> **"ACP: Switch Session"** - while a daemon is running, pick from the agent's recent sessions (via `session/list` on the live connection, filtered by the current working directory, capped by `session_list_limit`) and switch the daemon to it.
 
 ### Walkthrough
 
@@ -68,16 +68,16 @@ For available options see [configuration.md](docs/configuration.md).
 
 ## Commands
 
-| Palette Command               | Keybinding         | Description                                            |
-| ----------------------------- | ------------------ | ------------------------------------------------------ |
-| ACP: Start Session            | `Ctrl+Alt+A`       | Start a persistent agent daemon                        |
-| ACP: Stop Session             | `Ctrl+Alt+Shift+A` | Terminate the running daemon                           |
-| ACP: Send Prompt              | `Alt+Shift+A`      | One-shot prompt (or send to daemon)                    |
-| ACP: Interrupt Current Prompt | `Ctrl+Break`       | Cancel the in-flight prompt (daemon only)              |
-| ACP: Continue Session         | -                  | Pick a recent session via `session/list` and resume it |
-| ACP: Switch Model             | -                  | Change model mid-session (daemon only)                 |
-| ACP: Switch Mode              | -                  | Change session mode mid-session (daemon only)          |
-| ACP: Switch Thought Level     | -                  | Change reasoning effort mid-session (daemon only)      |
+| Palette Command               | Keybinding         | Description                                                    |
+| ----------------------------- | ------------------ | -------------------------------------------------------------- |
+| ACP: Start Session            | `Ctrl+Alt+A`       | Start a persistent agent daemon                                |
+| ACP: Stop Session             | `Ctrl+Alt+Shift+A` | Terminate the running daemon                                   |
+| ACP: Send Prompt              | `Alt+Shift+A`      | One-shot prompt (or send to daemon)                            |
+| ACP: Interrupt Current Prompt | `Ctrl+Break`       | Cancel the in-flight prompt (daemon only)                      |
+| ACP: Switch Session           | -                  | Switch the running daemon to a recent session (`session/list`) |
+| ACP: Switch Model             | -                  | Change model mid-session (daemon only)                         |
+| ACP: Switch Mode              | -                  | Change session mode mid-session (daemon only)                  |
+| ACP: Switch Thought Level     | -                  | Change reasoning effort mid-session (daemon only)              |
 
 To enable keyboard shortcut open "Preferences -> Package Settings -> ACP -> Example Key Bindings".
 
