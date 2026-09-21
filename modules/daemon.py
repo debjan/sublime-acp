@@ -361,6 +361,62 @@ def _install_notification_handler(conn, cmd, on_usage=None):
     conn.notification_callback = on_notification
 
 
+def _extract_config_update(method: str, params: dict) -> tuple[bool, Any]:
+    """Return ``(matched, configOptions)`` for a config update notification."""
+    if method != 'session/update' or not isinstance(params, dict):
+        return False, None
+    update = params.get('update', {})
+    if not isinstance(update, dict):
+        return False, None
+    if update.get('sessionUpdate') not in ('config_option_update', 'current_mode_update'):
+        return False, None
+    if update.get('sessionUpdate') == 'current_mode_update':
+        return True, None
+    return True, update.get('configOptions')
+
+
+def _refresh_cached_config(cmd, config_options) -> None:
+    """Overwrite cached ``config_options`` so model/mode pickers stay accurate."""
+    if not config_options:
+        return
+    try:
+        with cache.cache_lock:
+            agents = cache.load_agents(_cache_dir())
+            entry = agents.get(cmd[0], {})
+            entry['config_options'] = config_options
+            agents[cmd[0]] = entry
+            cache.save_agents(_cache_dir(), agents)
+    except Exception as exc:
+        acp_log('switch_session', f'failed to refresh cached config: {exc!r}')
+
+
+def _apply_switched_config(cmd, result, replayed) -> None:
+    """Refresh cached model/mode from a switch response and replayed updates."""
+    config_options = (result or {}).get('configOptions') if isinstance(result, dict) else None
+    if config_options:
+        _refresh_cached_config(cmd, config_options)
+        return
+    if replayed:
+        for item in reversed(replayed):
+            if isinstance(item, list):
+                _refresh_cached_config(cmd, item)
+                return
+
+
+def _refresh_daemon_status(state) -> None:
+    """Re-render the status bar so the model indicator matches the session."""
+    window = _window_for_state(state)
+    if window is None:
+        return
+    agent_name = state.get('agent_name') or 'agent'
+    agent_cmd = state.get('agent_cmd')
+    ui.on_main(lambda: broadcast.set_broadcast_status(
+        STATUS_KEY_DAEMON,
+        broadcast.daemon_status_text(agent_name, agent_cmd),
+        window,
+    ))
+
+
 def _cache_daemon_agent_info(cmd, init_result):
     """Cache agent information from initialization result."""
     try:
@@ -821,11 +877,13 @@ def _window_for_state(state: DaemonState):
 
 
 async def _resume_on_conn(conn, agent_caps: dict | None,
-                          session_id: str, cwd: str | None) -> str:
+                          session_id: str, cwd: str | None) -> tuple[str, dict | None]:
     """Resume *session_id* on a live *conn* via ``session/resume``/``load``.
 
-    Returns the status constant on success and raises :class:`ACPError` when
-    the agent does not support resume/load or rejects the request.
+    Returns ``(status, result)`` where *result* is the agent's response
+    dict (carrying the session's ``configOptions``/``modes``). Raises
+    :class:`ACPError` when the agent does not support resume/load or
+    rejects the request.
     """
     params = {
         'sessionId': session_id,
@@ -833,11 +891,11 @@ async def _resume_on_conn(conn, agent_caps: dict | None,
         'mcpServers': [],
     }
     if supports_resume(agent_caps):
-        await conn.send_request('session/resume', params)
-        return STATUS_RESUMED
+        result = await conn.send_request('session/resume', params)
+        return STATUS_RESUMED, result if isinstance(result, dict) else None
     if supports_load(agent_caps):
-        await conn.send_request('session/load', params)
-        return STATUS_LOADED
+        result = await conn.send_request('session/load', params)
+        return STATUS_LOADED, result if isinstance(result, dict) else None
     raise ACPError(-32601, 'Agent does not support session resume or load')
 
 
@@ -1029,6 +1087,7 @@ def switch_daemon_session(window_id: int, session_id: str,
                 tool_state: dict = {}
                 commands_holder: list = []
                 usage_holder: list = []
+                config_holder: list = []
 
                 def _on_replay(method: str, params: dict) -> None:
                     if method != 'session/update' or not isinstance(params, dict):
@@ -1044,21 +1103,29 @@ def switch_daemon_session(window_id: int, session_id: str,
                     if um:
                         usage_holder.append((used, size))
                         return
+                    cm, config = _extract_config_update(method, params)
+                    if cm:
+                        config_holder.append(config)
+                        return
                     text = format_replay_update(update, thoughts_mode, show_tools, tool_state)
                     if text:
                         chunks.append(text)
 
                 try:
-                    await load_session_with_replay(conn, session_id, work_dir, _on_replay)
+                    load_result = await load_session_with_replay(conn, session_id, work_dir, _on_replay)
                     if commands_holder and commands_holder[-1] is not None:
                         _make_commands_updater(cmd)(commands_holder[-1])
                     if usage_holder:
                         _make_usage_updater(state)(*usage_holder[-1])
+                    _apply_switched_config(cmd, load_result, config_holder)
+                    _refresh_daemon_status(state)
                     return True, None, ''.join(chunks)
                 except (ACPError, asyncio.TimeoutError, ConnectionError) as exc:
                     acp_log('switch_session', f'replay load failed ({exc!r}); falling back')
             try:
-                await _resume_on_conn(conn, agent_caps, session_id, work_dir)
+                _, resume_result = await _resume_on_conn(conn, agent_caps, session_id, work_dir)
+                _apply_switched_config(cmd, resume_result, None)
+                _refresh_daemon_status(state)
                 return True, None, None
             except (ACPError, asyncio.TimeoutError, ConnectionError) as exc:
                 acp_log('switch_session', f'in-place resume failed ({exc!r}); reconnecting')
@@ -1066,6 +1133,8 @@ def switch_daemon_session(window_id: int, session_id: str,
                 ok, err = await _reconnect_and_resume(
                     state, cmd, _build_env(env or {}), work_dir, session_id,
                 )
+                if ok:
+                    _refresh_daemon_status(state)
                 return ok, err, None
             except Exception as exc:
                 acp_log('switch_session', f'reconnect failed: {exc!r}')

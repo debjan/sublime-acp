@@ -116,13 +116,15 @@ async def load_session_with_replay(
     session_id: str,
     cwd: str | None,
     on_update: Any,
-) -> None:
+) -> dict[str, Any] | None:
     """Load *session_id* via ``session/load``, forwarding replay updates.
 
     Installs *on_update(method, params)* as the temporary notification
     callback while the ``session/load`` request is in flight, so the
     agent's replayed ``session/update`` notifications are captured.
-    The persistent callbacks are restored afterwards.
+    The persistent callbacks are restored afterwards. Returns the
+    ``session/load`` result (carrying the session's ``configOptions``)
+    or ``None`` when the agent returned no result.
     """
     base_params: dict[str, Any] = {
         'sessionId': session_id,
@@ -130,7 +132,8 @@ async def load_session_with_replay(
         'mcpServers': [],
     }
     async with conn.swap_callbacks(on_update, conn.request_callback):
-        await conn.send_request('session/load', base_params)
+        result = await conn.send_request('session/load', base_params)
+    return result if isinstance(result, dict) else None
 
 
 def supports_resume(agent_caps: dict | None) -> bool:
