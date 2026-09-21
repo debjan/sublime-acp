@@ -49,13 +49,14 @@ With more than one entry, a quick panel lets you pick; a single entry is auto-se
 
 ### Timeouts
 
-| Setting                     | Default | Purpose                                                                                                                                                                              |
-| --------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `daemon_idle_timeout`       | `900`   | Seconds of inactivity before an idle daemon shuts down (`0` = never)                                                                                                                 |
-| `timeout`                   | `600`   | Seconds to wait for *any* agent output before cancelling a turn. The clock resets on every streamed text, thought, tool call, or file edit - long multi-edit turns won't be cut off. |
-| `permission_prompt_timeout` | `300`   | Hard cap in seconds for an open permission prompt before it is denied (`0` = wait forever). Prompts queue per window.                                                                |
-| `cache_ttl`                 | `300`   | Seconds before the `@`-completions file cache expires (`0` = always refresh)                                                                                                         |
-| `session_list_limit`        | `10`    | Max sessions shown by *ACP: Switch Session* (`session/list`, filtered by cwd)                                                                                                        |
+| Setting                     | Default | Purpose                                                                                                                                                                                                                                                  |
+| --------------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `daemon_idle_timeout`       | `900`   | Seconds of inactivity before an idle daemon shuts down (`0` = never)                                                                                                                                                                                     |
+| `timeout`                   | `600`   | Seconds to wait for *any* agent output before cancelling a turn. The clock resets on every streamed text, thought, tool call, or file edit - long multi-edit turns won't be cut off.                                                                     |
+| `permission_prompt_timeout` | `300`   | Hard cap in seconds for an open permission prompt before it is denied (`0` = wait forever). Prompts queue per window.                                                                                                                                    |
+| `cache_ttl`                 | `300`   | Seconds before the `@`-completions file cache expires (`0` = always refresh)                                                                                                                                                                             |
+| `session_list_limit`        | `10`    | Max sessions shown by *ACP: Switch Session* (`session/list`, filtered by cwd)                                                                                                                                                                            |
+| `session_replay_on_switch`  | `false` | Replay full conversation history into the output view when switching sessions (via `session/load`). `false` = only show a "switched" notice. Thoughts/tool calls follow `thoughts`/`tool_calls`; view is cleared with a session header plus turn divider |
 
 ### Thoughts
 
@@ -80,8 +81,8 @@ Bullets stream inline as the agent reports each tool finishing, for example `` -
 
 ### Output view
 
-| Setting     | Default | Purpose                                                                       |
-| ----------- | ------- | ----------------------------------------------------------------------------- |
+| Setting     | Default | Purpose                                                                              |
+| ----------- | ------- | ------------------------------------------------------------------------------------ |
 | `font_size` | `null`  | Font size (points) for the ACP scratch output views; `null`/unset = global font size |
 
 ### Permissions

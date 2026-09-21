@@ -133,6 +133,11 @@
               "default": 10,
               "description": "Maximum sessions shown by 'ACP: Switch Session' (session/list)."
             },
+            "session_replay_on_switch": {
+              "type": "boolean",
+              "default": false,
+              "description": "Replay full conversation history into the output view when switching sessions (via session/load). false = only show a 'switched' notice."
+            },
             "daemon_idle_timeout": {
               "type": "integer",
               "minimum": 0,

@@ -44,7 +44,7 @@ def _compact_tokens(value: int) -> str:
         return str(value)
     if value >= 1_000_000:
         val = round(value / 1_000_000, 1)
-        return f'{int(val)}M' if val.is_integer() else f'{val}M'
+        return f'{int(val)}M' if val == int(val) else f'{val}M'
     rounded = round(value / 1000)
     return f'{rounded}k'
 

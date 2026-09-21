@@ -208,6 +208,20 @@ def append_to_output_view(view: sublime.View, text: str) -> None:
     on_main(lambda: _append_text(view, text))
 
 
+def replace_output_view(view: sublime.View, text: str) -> None:
+    """Clear *view* and replace its content with *text* (main thread only)."""
+
+    def _replace() -> None:
+        try:
+            view.run_command('select_all')
+            view.run_command('left_delete')
+            _append_text(view, text)
+        except Exception:
+            pass  # view was destroyed during shutdown
+
+    on_main(_replace)
+
+
 def append_turn_divider(view: sublime.View, enabled: bool | None = None) -> None:
     """Append a markdown horizontal rule marking the end of an agent turn."""
     if enabled is None:

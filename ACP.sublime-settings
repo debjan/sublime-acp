@@ -101,6 +101,10 @@
     // Maximum sessions shown by "ACP: Switch Session" (session/list)
     "session_list_limit": 10,
 
+    // Replay full conversation history into the output view when switching
+    // sessions (via session/load). false = only show a "switched" notice.
+    "session_replay_on_switch": false,
+
     // Seconds of inactivity before auto-terminating the daemon (0 = disabled)
     "daemon_idle_timeout": 900,
 

@@ -367,6 +367,65 @@ def _format_tool_bullet(entry: dict) -> str:
     return bullet
 
 
+def _replay_text(update: dict) -> str:
+    """Extract plain text from a replay *update*'s content (dict or list)."""
+    content = update.get('content', '')
+    if isinstance(content, dict):
+        content = [content]
+    if isinstance(content, list):
+        parts = [b.get('text', '') for b in content
+                 if isinstance(b, dict) and b.get('type') == 'text']
+        return ''.join(parts)
+    return str(content) if content else ''
+
+
+def format_replay_update(update: dict, thoughts_mode: str = 'enabled',
+                         show_tool_calls: bool = True,
+                         tool_state: dict | None = None) -> str | None:
+    """Format one replayed ``session/update`` *update* as markdown.
+
+    Args:
+        update: The ``update`` dict from ``session/update`` params.
+        thoughts_mode: ``'enabled'`` includes thoughts as blockquotes;
+            ``'console'``/``'disabled'`` drops them.
+        show_tool_calls: When ``False``, tool call updates render nothing.
+        tool_state: Mutable dict tracking partial tool calls by ID; a fresh
+            one is used when omitted (callers should pass a shared dict so
+            multi-part tool updates merge correctly).
+
+    Returns:
+        A markdown string, or ``None`` when the update carries nothing to
+        display (usage/commands updates, dropped thoughts, non-terminal
+        tool updates).
+    """
+    if not isinstance(update, dict):
+        return None
+    kind = update.get('sessionUpdate', update.get('type', ''))
+    if kind in ('user_message', 'user_message_chunk'):
+        if text := _replay_text(update):
+            return f'\n> **User**: {text}\n'
+        return None
+    if kind in ('agent_message', 'agent_message_chunk'):
+        return _replay_text(update) or None
+    if kind in ('agent_thought_chunk', 'thought'):
+        if thoughts_mode != 'enabled':
+            return None
+        if text := _replay_text(update):
+            return _format_blockquote(text)
+        # Chunk-style thought without content dict (rpc stream shape).
+        text = update.get('text', '') if isinstance(update.get('text'), str) else ''
+        return _format_blockquote(text) if text.strip() else None
+    if kind in _TOOL_CALL_DISCRIMINATORS:
+        if not show_tool_calls:
+            return None
+        state = _StreamState()
+        state.tool_calls = tool_state if tool_state is not None else {}
+        if bullet := _consume_tool_call(state, {'update': update}):
+            return bullet + '\n'
+        return None
+    return None
+
+
 def _make_fs_permission_params(
     tool_kind: str,
     title: str,

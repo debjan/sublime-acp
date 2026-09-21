@@ -27,6 +27,7 @@ from ..protocol import (
     cleanup_process,
     close_writer,
     list_sessions,
+    load_session_with_replay,
     new_session,
     signal_process_group,
     supports_list,
@@ -54,6 +55,7 @@ from .rpc import (
     _extract_available_commands,
     _extract_usage_update,
     acp,
+    format_replay_update,
     send_prompt_and_stream,
     spawn_and_init,
 )
@@ -971,7 +973,7 @@ def _submit_daemon_task(loop, task_factory: Callable, on_done: Callable | None):
 
 
 def _finish_session_change(state, cmd, sid, ok, error, success_view, success_status,
-                           fail_view, fail_status, on_done) -> None:
+                           fail_view, fail_status, on_done, replay_text=None) -> None:
     if ok:
         _update_agent_session_id(cmd, sid)
         state.set(
@@ -981,7 +983,11 @@ def _finish_session_change(state, cmd, sid, ok, error, success_view, success_sta
         )
         output_view = state.get('output_view')
         if output_view is not None:
-            ui.append_to_output_view(output_view, success_view(sid))
+            if replay_text:
+                ui.replace_output_view(output_view, success_view(sid) + replay_text)
+                ui.append_turn_divider(output_view)
+            else:
+                ui.append_to_output_view(output_view, success_view(sid))
         broadcast.erase_broadcast_status(STATUS_KEY_USAGE, _window_for_state(state))
         sublime.status_message(success_status(sid))
     else:
@@ -1007,24 +1013,63 @@ def switch_daemon_session(window_id: int, session_id: str,
         return
     state, conn, loop, cmd, env, work_dir = ctx
 
+    replay = bool(load_settings().get('session_replay_on_switch', False))
+    thoughts_mode = load_settings().get('thoughts', 'enabled')
+    show_tools = load_settings().get('tool_calls', TOOL_CALLS_DEFAULT) == 'enabled'
+
     async def _do_switch():
         state.set(is_busy=True)
         try:
             agent_caps = state.get('agent_caps')
             if not state.supports('resume_or_load'):
-                return False, 'Agent does not support session resume or load'
+                return False, 'Agent does not support session resume or load', None
+            # Full-history replay: session/load replays via session/update.
+            if replay and state.supports('load'):
+                chunks: list[str] = []
+                tool_state: dict = {}
+                commands_holder: list = []
+                usage_holder: list = []
+
+                def _on_replay(method: str, params: dict) -> None:
+                    if method != 'session/update' or not isinstance(params, dict):
+                        return
+                    update = params.get('update', {})
+                    if not isinstance(update, dict):
+                        return
+                    matched, commands = _extract_available_commands(method, params)
+                    if matched:
+                        commands_holder.append(commands)
+                        return
+                    um, used, size = _extract_usage_update(method, params)
+                    if um:
+                        usage_holder.append((used, size))
+                        return
+                    text = format_replay_update(update, thoughts_mode, show_tools, tool_state)
+                    if text:
+                        chunks.append(text)
+
+                try:
+                    await load_session_with_replay(conn, session_id, work_dir, _on_replay)
+                    if commands_holder and commands_holder[-1] is not None:
+                        _make_commands_updater(cmd)(commands_holder[-1])
+                    if usage_holder:
+                        _make_usage_updater(state)(*usage_holder[-1])
+                    return True, None, ''.join(chunks)
+                except (ACPError, asyncio.TimeoutError, ConnectionError) as exc:
+                    acp_log('switch_session', f'replay load failed ({exc!r}); falling back')
             try:
                 await _resume_on_conn(conn, agent_caps, session_id, work_dir)
-                return True, None
+                return True, None, None
             except (ACPError, asyncio.TimeoutError, ConnectionError) as exc:
                 acp_log('switch_session', f'in-place resume failed ({exc!r}); reconnecting')
             try:
-                return await _reconnect_and_resume(
+                ok, err = await _reconnect_and_resume(
                     state, cmd, _build_env(env or {}), work_dir, session_id,
                 )
+                return ok, err, None
             except Exception as exc:
                 acp_log('switch_session', f'reconnect failed: {exc!r}')
-                return False, str(exc)
+                return False, str(exc), None
         finally:
             state.set(is_busy=False)
 
@@ -1034,19 +1079,21 @@ def switch_daemon_session(window_id: int, session_id: str,
 
     def _done(f):
         try:
-            ok, error = f.result()
+            ok, error, replay_text = f.result()
         except Exception as exc:
             acp_log('switch_session', f'switch raised: {exc!r}')
-            ok, error = False, str(exc)
+            ok, error, replay_text = False, str(exc), None
 
         def _apply():
+            header = f'\n# Switched to session `{session_id}`\n' if (ok and replay_text) else None
             _finish_session_change(
                 state, cmd, session_id, ok, error,
-                lambda sid: f'\n*[Switched to session: {sid}]*\n',
+                lambda sid: (header if header else f'\n*[Switched to session: {sid}]*\n'),
                 lambda sid: f'ACP: Switched to session {sid[-8:]}',
                 lambda err: f'\n**[Could not switch session: {err or "unknown error"}]**\n',
                 lambda err: f'ACP: Could not switch session: {err or "unknown error"}',
                 on_done,
+                replay_text=replay_text,
             )
 
         ui.on_main(_apply)
