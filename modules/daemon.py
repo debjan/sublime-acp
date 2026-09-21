@@ -29,6 +29,10 @@ from ..protocol import (
     list_sessions,
     new_session,
     signal_process_group,
+    supports_list,
+    supports_load,
+    supports_resume,
+    supports_resume_or_load,
 )
 from . import broadcast, cache, git_summary, ui
 from .config import (
@@ -105,6 +109,29 @@ class DaemonState:
         with self._lock:
             d = {k: getattr(self, k, None) for k in keys}
             return d[keys[0]] if len(keys) == 1 else d
+
+    def supports(self, method: str) -> bool:
+        """Return whether the active agent advertises support for *method*.
+
+        Args:
+            method: One of ``'resume'``, ``'load'``, ``'resume_or_load'``,
+                or ``'list'``, mapping to ``session/resume``,
+                ``session/load``, either of those, or ``session/list``.
+
+        Returns:
+            ``True`` when the cached ``agent_caps`` advertises the method.
+        """
+        with self._lock:
+            caps = self.agent_caps
+        if method == 'list':
+            return supports_list(caps)
+        if method == 'resume':
+            return supports_resume(caps)
+        if method == 'load':
+            return supports_load(caps)
+        if method == 'resume_or_load':
+            return supports_resume_or_load(caps)
+        raise ValueError(f'Unknown capability method: {method!r}')
 
     def reset(self, stop_idle_timer_func=None) -> None:
         with self._lock:
@@ -772,6 +799,8 @@ async def _reconnect_daemon_session(
     else:
         if new_sid:
             _update_agent_session_id(cmd, new_sid)
+        if session_error := init_result.get('session_error'):
+            _note(f'\n**[{session_error}]**\n\n')
         _note('*[Started a new session]*\n')
     return proc, conn, new_sid
 
@@ -796,16 +825,15 @@ async def _resume_on_conn(conn, agent_caps: dict | None,
     Returns the status constant on success and raises :class:`ACPError` when
     the agent does not support resume/load or rejects the request.
     """
-    sess_caps = (agent_caps or {}).get('sessionCapabilities') or {}
     params = {
         'sessionId': session_id,
         'cwd': cwd or os.getcwd(),
         'mcpServers': [],
     }
-    if isinstance(sess_caps.get('resume'), dict):
+    if supports_resume(agent_caps):
         await conn.send_request('session/resume', params)
         return STATUS_RESUMED
-    if (agent_caps or {}).get('loadSession'):
+    if supports_load(agent_caps):
         await conn.send_request('session/load', params)
         return STATUS_LOADED
     raise ACPError(-32601, 'Agent does not support session resume or load')
@@ -868,9 +896,7 @@ def list_daemon_sessions(window_id: int, on_done: Callable) -> None:
         ui.on_main(lambda: on_done(None, False))
         return
 
-    agent_caps = state.get('agent_caps') or {}
-    sess_caps = agent_caps.get('sessionCapabilities') or {}
-    if not isinstance(sess_caps.get('list'), dict):
+    if not state.supports('list'):
         ui.on_main(lambda: on_done(None, False))
         return
 
@@ -984,9 +1010,8 @@ def switch_daemon_session(window_id: int, session_id: str,
     async def _do_switch():
         state.set(is_busy=True)
         try:
-            agent_caps = state.get('agent_caps') or {}
-            sess_caps = agent_caps.get('sessionCapabilities') or {}
-            if not (isinstance(sess_caps.get('resume'), dict) or agent_caps.get('loadSession')):
+            agent_caps = state.get('agent_caps')
+            if not state.supports('resume_or_load'):
                 return False, 'Agent does not support session resume or load'
             try:
                 await _resume_on_conn(conn, agent_caps, session_id, work_dir)

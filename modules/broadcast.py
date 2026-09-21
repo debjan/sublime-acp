@@ -75,5 +75,4 @@ def show_spinner(view, is_done, message, on_done=None):
             erase_broadcast_status(STATUS_KEY_DAEMON, win)
             if on_done:
                 on_done()
-
     tick(0)

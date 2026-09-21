@@ -90,6 +90,11 @@
               "default": true,
               "description": "Append markdown dividers (---) after each user prompt and agent reply."
             },
+            "font_size": {
+              "type": ["number", "null"],
+              "default": null,
+              "description": "Font size (in points) applied to the ACP scratch output views. null = use the global font size."
+            },
             "context_usage": {
               "type": "boolean",
               "default": true,

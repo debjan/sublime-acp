@@ -21,6 +21,25 @@ from .schema import (
     validate_json_rpc,
 )
 
+try:
+    import orjson
+except ImportError:
+    orjson = None
+
+
+def _encode_json(msg: dict[str, Any]) -> bytes:
+    """Encode *msg* as compact JSON bytes, using ``orjson`` when available."""
+    if orjson is not None:
+        return orjson.dumps(msg)
+    return json.dumps(msg, separators=(',', ':')).encode('utf-8')
+
+
+def _decode_json(raw: str) -> dict[str, Any]:
+    """Decode a JSON document, using ``orjson`` when available."""
+    if orjson is not None:
+        return orjson.loads(raw)
+    return json.loads(raw)
+
 
 class ACPError(Exception):
     """JSON-RPC error returned by the agent."""
@@ -255,9 +274,9 @@ class Connection:
         self._last_activity = asyncio.get_event_loop().time()
 
         try:
-            msg = json.loads(raw)
-        except json.JSONDecodeError as exc:
-            acp_log('connection', f'JSON decode error: {exc}')
+            msg = _decode_json(raw)
+        except Exception as exc:
+            acp_log('connection', f'JSON decode error: {exc}: {raw[:200]!r}')
             return True
 
         try:
@@ -330,8 +349,7 @@ class Connection:
             return
 
     async def _write_raw(self, msg: dict[str, Any]) -> None:
-        data = json.dumps(msg, separators=(',', ':'))
-        self._writer.write((data + '\n').encode('utf-8'))
+        self._writer.write(_encode_json(msg) + b'\n')
         await self._writer.drain()
 
     @property

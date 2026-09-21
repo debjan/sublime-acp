@@ -78,6 +78,12 @@ The `tool_calls` setting controls whether agent tool call results are surfaced i
 
 Bullets stream inline as the agent reports each tool finishing, for example `` - ✓ **read** `Read modules/rpc.py` ``. Failed calls use `✗` and append a one-line error summary. Non-terminal statuses are not shown.
 
+### Output view
+
+| Setting     | Default | Purpose                                                                       |
+| ----------- | ------- | ----------------------------------------------------------------------------- |
+| `font_size` | `null`  | Font size (points) for the ACP scratch output views; `null`/unset = global font size |
+
 ### Permissions
 
 Controls automatic approval/rejection of agent tool calls and host-filesystem operations (see [permissions.md](permissions.md)):

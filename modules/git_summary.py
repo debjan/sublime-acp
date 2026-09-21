@@ -212,7 +212,7 @@ def _new_paths(before: dict[str, str], after: dict[str, str]) -> list[str]:
 
     Porcelain status omits clean files, but that needs no tracked-files set
     to resolve: a clean-tracked file dirtied mid-turn surfaces as ``M``,
-    never ``??``/``A`` — and unlike ``ls-files`` output, status codes are
+    never ``??``/``A`` - and unlike ``ls-files`` output, status codes are
     immune to quotepath key mismatches on non-ASCII paths.
     """
     return sorted(
@@ -336,7 +336,7 @@ def summarize(
     if include_diff:
         shown = 0
         total = 0
-        for path, _, patch in resolved:
+        for _, _, patch in resolved:
             if not patch or not patch.strip():
                 continue
             if shown >= MAX_FILES or total >= MAX_TOTAL_CHARS:

@@ -105,7 +105,7 @@ def _show_permission_prompt(params: dict, on_done: Callable, window_id: int) -> 
             for name in names
         ]
     else:  # pragma: no cover - older Sublime without QuickPanelItem
-        items = [f'{name} — {short_title}' for name in names]
+        items = [f'{name} - {short_title}' for name in names]
 
     window.show_quick_panel(
         items, _on_done,

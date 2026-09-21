@@ -32,6 +32,57 @@ class AgentSpawnError(Exception):
         self.cmd = cmd
 
 
+async def _pump_stderr(proc) -> None:
+    """Forward an agent's stderr lines to the debug log until EOF.
+
+    Prevents pipe-fill deadlock once stderr is piped, and preserves crash
+    output that ``DEVNULL`` would discard. Ends quietly on EOF or error.
+    """
+    stream = proc.stderr
+    if stream is None:
+        return
+    try:
+        while True:
+            line = await stream.readline()
+            if not line:
+                break
+            if text := line.decode('utf-8', 'replace').rstrip():
+                acp_log('agent-stderr', f'[pid={proc.pid}] {text}')
+    except (asyncio.CancelledError, Exception):
+        pass
+
+
+def _start_stderr_pump(proc) -> None:
+    """Attach a background stderr pump task to *proc* (best effort)."""
+    if getattr(proc, 'stderr', None) is None:
+        return
+    with contextlib.suppress(Exception):
+        proc._acp_stderr_task = asyncio.ensure_future(_pump_stderr(proc))
+
+
+async def _stop_stderr_pump(proc, drain_timeout: float | None = None) -> None:
+    """Stop the stderr pump attached to *proc*, if any.
+
+    When *drain_timeout* is given, first wait up to that many seconds for
+    the pump to reach EOF on its own (preserving buffered crash output),
+    then cancel any remainder.
+    """
+    task = getattr(proc, '_acp_stderr_task', None)
+    if task is None:
+        return
+    with contextlib.suppress(Exception):
+        delattr(proc, '_acp_stderr_task')
+    if task.done():
+        return
+    if drain_timeout is not None:
+        with contextlib.suppress(asyncio.TimeoutError, Exception):
+            await asyncio.wait_for(asyncio.shield(task), drain_timeout)
+            return
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError, Exception):
+        await task
+
+
 class SubprocessTransport:
     """Manages the lifecycle of an ACP agent subprocess."""
 
@@ -89,7 +140,7 @@ class SubprocessTransport:
             *full_cmd,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
             limit=1024 * 1024,
             **extra_kwargs,
         )
@@ -97,6 +148,7 @@ class SubprocessTransport:
         self.proc = proc
         self.reader = proc.stdout
         self.writer = proc.stdin
+        _start_stderr_pump(proc)
         return proc, self.reader, self.writer  # ty:ignore[invalid-return-type]
 
     async def cleanup(self) -> None:
@@ -175,6 +227,7 @@ async def _cleanup_proc_impl(
 
     if proc is not None and proc.returncode is not None:
         acp_log('transports', f'_cleanup_proc_impl: process already exited (returncode={proc.returncode})')
+        await _stop_stderr_pump(proc, drain_timeout=1.0)
         await asyncio.sleep(0.05)
         return
 
@@ -199,6 +252,9 @@ async def _cleanup_proc_impl(
 
     if sys.platform == 'win32':
         await asyncio.sleep(0.1)
+
+    if proc is not None:
+        await _stop_stderr_pump(proc, drain_timeout=1.0)
 
     acp_log('transports', f'_cleanup_proc_impl: done (pid={proc_pid}, final returncode={proc.returncode if proc else None})')
 

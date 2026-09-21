@@ -2,6 +2,8 @@
 
 import os
 
+import sublime_plugin
+
 from .modules import file_walker
 from .modules.commands import (
     AcpActionsCommand,
@@ -52,3 +54,9 @@ def plugin_unloaded():
     except Exception:
         pass
     file_walker.clear_all_caches()
+
+
+class AcpExitListener(sublime_plugin.EventListener):
+    """Guard on hard-quit."""
+    def on_exit(self) -> None:
+        _stop_all_daemons()

@@ -34,7 +34,8 @@ def create_output_view(window: sublime.Window, agent_name: str = '',
     """Create a scratch buffer output view for ACP responses.
 
     The view is configured with Markdown syntax, word wrap enabled, and
-    line numbers hidden.
+    line numbers hidden. The ``font_size`` setting overrides the view's
+    font size when set (``null``/unset uses the global font size).
 
     Args:
         window: The Sublime window to create the view in.
@@ -53,6 +54,8 @@ def create_output_view(window: sublime.Window, agent_name: str = '',
     vs = view.settings()
     vs.set('word_wrap', True)
     vs.set('line_numbers', False)
+    if font_size := settings().get('font_size'):
+        vs.set('font_size', font_size)
     return view
 
 

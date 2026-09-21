@@ -74,6 +74,9 @@
     // Append markdown dividers (---) after each user prompt and agent reply
     "turn_dividers": true,
 
+    // Font size (points) applied to ACP scratch output views (null = global font size)
+    "font_size": null,
+
     // Show context token usage in the status bar (e.g. ctx 27% (53k/200k))
     "context_usage": true,
 

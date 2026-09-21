@@ -9,6 +9,10 @@ from .session import (
     list_sessions,
     new_session,
     resolve_session,
+    supports_list,
+    supports_load,
+    supports_resume,
+    supports_resume_or_load,
 )
 from .transports import (
     AgentSpawnError,
@@ -37,5 +41,9 @@ __all__ = [
     'resolve_session',
     'signal_process_group',
     'spawn_subprocess',
+    'supports_list',
+    'supports_load',
+    'supports_resume',
+    'supports_resume_or_load',
     'validate_json_rpc',
 ]

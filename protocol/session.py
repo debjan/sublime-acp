@@ -82,8 +82,7 @@ async def resolve_session(
     }
 
     if session_id is not None:
-        sess_caps = agent_caps.get('sessionCapabilities') or {}
-        if isinstance(sess_caps, dict) and isinstance(sess_caps.get('resume'), dict):
+        if supports_resume(agent_caps):
             try:
                 await conn.send_request('session/resume', {
                     'sessionId': session_id, **base_params,
@@ -93,7 +92,7 @@ async def resolve_session(
                 return await _fallback_new(
                     conn, base_params, f'Could not resume session: {exc}',
                 )
-        elif agent_caps.get('loadSession'):
+        elif supports_load(agent_caps):
             try:
                 await conn.send_request('session/load', {
                     'sessionId': session_id, **base_params,
@@ -110,6 +109,28 @@ async def resolve_session(
             )
 
     return await new_session(conn, base_params)
+
+
+def supports_resume(agent_caps: dict | None) -> bool:
+    """Return whether the agent advertises ``session/resume`` support."""
+    sess_caps = (agent_caps or {}).get('sessionCapabilities') or {}
+    return isinstance(sess_caps.get('resume'), dict)
+
+
+def supports_load(agent_caps: dict | None) -> bool:
+    """Return whether the agent advertises ``session/load`` support."""
+    return bool((agent_caps or {}).get('loadSession'))
+
+
+def supports_resume_or_load(agent_caps: dict | None) -> bool:
+    """Return whether the agent supports resuming or loading a session."""
+    return supports_resume(agent_caps) or supports_load(agent_caps)
+
+
+def supports_list(agent_caps: dict | None) -> bool:
+    """Return whether the agent advertises ``session/list`` support."""
+    sess_caps = (agent_caps or {}).get('sessionCapabilities') or {}
+    return isinstance(sess_caps.get('list'), dict)
 
 
 async def list_sessions(
