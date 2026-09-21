@@ -89,7 +89,6 @@
 
     // How agent thought chunks (thinking...) are surfaced:
     //   "enabled"  - thoughts render in the output view as blockquotes (default)
-    //   "console"  - thoughts go to the Sublime console (stderr); view shows the reply only
     //   "disabled" - thoughts are dropped; view shows the reply only
     "thoughts": "enabled",
 
@@ -133,6 +132,6 @@
         "auto_reject": []
     },
 
-    // Enable debug logging to the Sublime console (via stderr).
+    // Enable debug logging to the dedicated ACP Log output panel.
     "debug": false,
 }

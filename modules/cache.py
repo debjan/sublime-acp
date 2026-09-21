@@ -67,13 +67,33 @@ def load_agents(cache_dir: Path, ttl: float = CACHE_TTL_DEFAULT) -> dict:
 
 
 def save_agents(cache_dir: Path, data: dict) -> None:
-    """Save the agents dict to ``cache_dir/agents.json`` atomically."""
+    """Save the agents dict to ``cache_dir/agents.json`` atomically.
+
+    When the serialized content is unchanged, the file is left untouched
+    (keeping its mtime) so editors with the file open do not reload.
+    """
     cache_dir.mkdir(parents=True, exist_ok=True)
     data_file = _agents_path(cache_dir)
+    payload = json.dumps(data, indent=2, ensure_ascii=False).encode('utf-8')
+    try:
+        existing = data_file.read_bytes()
+    except OSError:
+        existing = None
+    if existing == payload:
+        with cache_lock:
+            try:
+                mtime_ns = data_file.stat().st_mtime_ns
+            except OSError:
+                _memo.pop(data_file, None)
+            else:
+                _memo[data_file] = (
+                    time.monotonic(), mtime_ns, copy.deepcopy(data),
+                )
+        return
     temp_file = cache_dir / 'agents.json.tmp'
     try:
-        with open(temp_file, 'w', encoding='utf-8') as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
+        with open(temp_file, 'wb') as f:
+            f.write(payload)
         os.replace(temp_file, data_file)
         with cache_lock:
             try:
@@ -90,10 +110,16 @@ def save_agents(cache_dir: Path, data: dict) -> None:
 
 
 def update_session_id(cache_dir: Path, cmd: list, session_id: str) -> None:
-    """Update the ``last_session_id`` for an agent in the cache atomically."""
+    """Update the ``last_session_id`` for an agent in the cache atomically.
+
+    A no-op when the cached ID already matches, so the cache file is not
+    rewritten (and editors do not reload) on repeated syncs.
+    """
     with cache_lock:
         agents = load_agents(cache_dir)
         agent_key = cmd[0]
+        if agents.get(agent_key, {}).get('last_session_id') == session_id:
+            return
         if agent_key not in agents:
             agents[agent_key] = {}
         agents[agent_key]['last_session_id'] = session_id

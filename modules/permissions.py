@@ -85,14 +85,14 @@ def _show_permission_prompt(params: dict, on_done: Callable, window_id: int) -> 
     ]
     option_ids = [o.get('optionId') for o in options]
 
-    acp_log('permissions', f'showing quick panel: title={title!r}, options={names}')
+    acp_log('permissions', f'showing quick panel: title={title!r}, options={names}', window_id)
 
     def _on_done(index: int) -> None:
         if index == -1:
-            acp_log('permissions', 'user cancelled quick panel (index=-1)')
+            acp_log('permissions', 'user cancelled quick panel (index=-1)', window_id)
             on_done(None)
         else:
-            acp_log('permissions', f'user selected: index={index}, optionId={option_ids[index]!r}')
+            acp_log('permissions', f'user selected: index={index}, optionId={option_ids[index]!r}', window_id)
             on_done(option_ids[index])
 
     with contextlib.suppress(Exception):
@@ -181,6 +181,7 @@ async def _prompt_user(
                 acp_log(
                     'permissions',
                     f'permission prompt timed out after {timeout}s - denying',
+                    window_id,
                 )
         finally:
             if _active_prompts.get(window_id) is _on_done:

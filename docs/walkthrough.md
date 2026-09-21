@@ -19,7 +19,7 @@ There are two ways to talk to an agent, and they coexist:
    - `@` - file and folder paths in your project, filtered by your `.gitignore` and the `ignore` setting;
    - `/` - the agent's own slash commands, read from the agent during initialization.
 
-3. **Press Enter.** A new scratch tab named *ACP Prompt:* opens and the response streams in as it is produced. Agent thinking chunks appear according to the `thoughts` setting (blockquotes in the tab, console-only, or dropped), and each completed or failed tool call appears as a one-line bullet according to the `tool_calls` setting.
+3. **Press Enter.** A new scratch tab named *ACP Prompt:* opens and the response streams in as it is produced. Agent thinking chunks appear according to the `thoughts` setting (blockquotes in the tab, or dropped), and each completed or failed tool call appears as a one-line bullet according to the `tool_calls` setting.
 4. **The session ends.** When the reply finishes the agent subprocess is torn down. Nothing is remembered for the next prompt.
 
 One-shot mode is deliberately read-only: agents are told to **never edit files** and to return diffs with `file:line` annotations instead. If the agent tries a filesystem write through ACP's `fs/writeTextFile` endpoint anyway, it is **denied** (no UI exists to approve it) unless you have an `auto_allow` rule for it.
@@ -99,7 +99,7 @@ sequenceDiagram
 - **One-shot is a safe sandbox.** Because writes are denied and the process exits after one reply, one-shot prompts are a good place to test prompts or talk to agents you don't fully trust yet.
 - **Quick actions are just prompts.** The *ACP: Actions* quick panel lists the entries from the `actions` setting - add your own (e.g. *"Suggest tests"*, *"Review for security"*).
 - **Watch the status bar.** The daemon state (✓ *ACP: [model]*) is broadcast to every view in the window, so you can tell at a glance whether a session is running and which model is active.
-- **Debugging.** If something misbehaves, set `"debug": true` in settings and restart the package; tagged JSON-RPC logs then appear in the Sublime console.
+- **Debugging.** If something misbehaves, set `"debug": true` in settings; tagged JSON-RPC logs then appear in the dedicated ACP Log output panel (`View > Output > ACP Log`).
 
 ## Where the code lives
 

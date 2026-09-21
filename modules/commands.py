@@ -306,6 +306,9 @@ class AcpInputCommand(sublime_plugin.WindowCommand):
         agents = _load_agents()
         slash_commands = agents.get(cmd[0] if cmd else '', {}).get('commands')
 
+        def on_cancel():
+            pass
+
         def on_done(text):
             if not exec_state.get('cmd'):
                 sublime.error_message('ACP: No command configured')
@@ -314,7 +317,7 @@ class AcpInputCommand(sublime_plugin.WindowCommand):
 
         caption = '✨'
         input_view = self.window.show_input_panel(
-            caption, initial_text, on_done, None, None
+            caption, initial_text, on_done, None, on_cancel
         )
         if input_view:
             input_view.set_name(INPUT_VIEW_NAME)

@@ -62,11 +62,10 @@ With more than one entry, a quick panel lets you pick; a single entry is auto-se
 
 The `thoughts` setting controls how agent thinking chunks are surfaced:
 
-| Value        | Behavior                                            |
-| ------------ | --------------------------------------------------- |
-| `"enabled"`  | Rendered in the output view as blockquotes          |
-| `"console"`  | Sent to the Sublime console only; view shows reply  |
-| `"disabled"` | Dropped entirely                                    |
+| Value        | Behavior                                   |
+| ------------ | ------------------------------------------ |
+| `"enabled"`  | Rendered in the output view as blockquotes |
+| `"disabled"` | Dropped entirely                           |
 
 ### Tool calls
 
@@ -111,9 +110,9 @@ Extra ignore rules for `@` path completions, applied on top of your `.gitignore`
 
 ### Debugging
 
-| Setting | Default | Purpose                                                    |
-| ------- | ------- | ---------------------------------------------------------- |
-| `debug` | `false` | Log agent stderr / JSON-RPC traffic to the Sublime console |
+| Setting | Default | Purpose                                                                                                                 |
+| ------- | ------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `debug` | `false` | Log agent stderr / JSON-RPC traffic to the dedicated ACP Log output panel (`View > Output > ACP Log`; never auto-shown) |
 
 ## Related docs
 

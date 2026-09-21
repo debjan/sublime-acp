@@ -35,7 +35,7 @@ from ..protocol import (
     supports_resume,
     supports_resume_or_load,
 )
-from . import broadcast, cache, git_summary, ui
+from . import broadcast, cache, debug_panel, git_summary, ui
 from .config import (
     DEFAULT_PERMISSIONS,
     IDLE_TIMEOUT_DEFAULT,
@@ -178,7 +178,7 @@ class DaemonState:
                 if w is not None:
                     w.run_command('hide_panel', {'cancel': True})
             ui.on_main(_hide_input_panel)
-        acp_log('daemon_state', 'daemon state reset complete')
+        acp_log('daemon_state', 'daemon state reset complete', window_id)
 
         def _clear_status():
             current = get_state(window_id) if window_id is not None else None
@@ -542,7 +542,8 @@ def _run_acp_worker(
         auth: Optional authentication flag.
     """
     on_chunk = ui.make_stream_callback(output_view)
-    args = (on_chunk, cmd, prompt, model, system_prompt, work_dir, env, timeout, session_id, settings, permissions_config, auth)
+    window_id = output_view.window().id() if output_view.window() is not None else None
+    args = (on_chunk, cmd, prompt, model, system_prompt, work_dir, env, timeout, session_id, settings, permissions_config, auth, window_id)
     thread = threading.Thread(target=_worker_thread, args=args, daemon=True)
 
     def _on_done():
@@ -577,6 +578,7 @@ def _worker_thread(
     settings=None,
     permissions_config: dict | None = None,
     auth: bool | None = None,
+    window_id: int | None = None,
 ):
     """Worker thread function for one-shot ACP requests.
 
@@ -597,6 +599,7 @@ def _worker_thread(
     async def async_wrapper():
         current_env = _build_env(env)
         tool_calls_mode = settings.get('tool_calls', TOOL_CALLS_DEFAULT) if settings else TOOL_CALLS_DEFAULT
+
         result_session_id, status, session_error = await acp(
             cmd=cmd,
             prompt=prompt,
@@ -634,6 +637,9 @@ def _worker_thread(
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
 
+    from ..protocol.log import set_log_window
+
+    set_log_window(window_id)
     try:
         loop.run_until_complete(async_wrapper())
     except Exception as exc:
@@ -1107,7 +1113,9 @@ def switch_daemon_session(window_id: int, session_id: str,
                     if cm:
                         config_holder.append(config)
                         return
-                    text = format_replay_update(update, thoughts_mode, show_tools, tool_state)
+                    text = format_replay_update(
+                        update, thoughts_mode, show_tools, tool_state,
+                    )
                     if text:
                         chunks.append(text)
 
@@ -1257,6 +1265,9 @@ def _daemon_thread_main(
         permissions_config: Optional permissions configuration.
         auth: Optional authentication flag.
     """
+    from ..protocol.log import set_log_window
+
+    set_log_window(window_id)
     acp_log(
         'daemon_session',
         f'daemon thread started for "{agent_name}" (thread={threading.current_thread().ident})'
@@ -1442,6 +1453,9 @@ def _stop_daemon(window_id: int, join_timeout: float = 5.0) -> None:
         window_id: Window ID for the daemon to stop.
         join_timeout: Maximum time to wait for thread exit in seconds.
     """
+    from ..protocol.log import set_log_window
+
+    set_log_window(window_id)
     state = get_state(window_id)
     if state is None or not state.is_running():
         acp_log('daemon_session', f'_stop_daemon called but daemon not running (window {window_id}) - no-op')
@@ -1495,6 +1509,8 @@ def _stop_daemon(window_id: int, join_timeout: float = 5.0) -> None:
             remove_state(window_id)
     else:
         acp_log('daemon_session', 'daemon state already cleaned up by thread exit')
+
+    debug_panel.clear_window_log(window_id)
 
 
 def _stop_daemon_async(window_id: int, on_done: Callable[[], None] | None = None) -> None:

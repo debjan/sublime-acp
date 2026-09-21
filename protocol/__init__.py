@@ -1,5 +1,5 @@
 from .connection import ACPError, Connection
-from .log import acp_log
+from .log import acp_log, set_log_sink
 from .schema import PROTOCOL_VERSION, validate_json_rpc
 from .session import (
     STATUS_ERROR,
@@ -41,6 +41,7 @@ __all__ = [
     'load_session_with_replay',
     'new_session',
     'resolve_session',
+    'set_log_sink',
     'signal_process_group',
     'spawn_subprocess',
     'supports_list',

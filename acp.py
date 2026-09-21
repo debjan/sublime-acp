@@ -26,15 +26,25 @@ from .modules.daemon import (
     request_unload,
     stop_all_daemons,
 )
+from .modules.debug_panel import AcpUpdateLogPanelCommand
+
+
+def _apply_debug_setting() -> None:
+    """Sync ``ACP_DEBUG`` env flag from settings (panel-only sink stays registered)."""
+    if settings().get('debug', False):
+        os.environ['ACP_DEBUG'] = '1'
+    else:
+        os.environ.pop('ACP_DEBUG', None)
 
 
 def plugin_loaded():
     """Configure debug mode and clear unload state on plugin load."""
     clear_unload()
-    if settings().get('debug', False):
-        os.environ['ACP_DEBUG'] = '1'
-    else:
-        os.environ.pop('ACP_DEBUG', None)
+    from .modules.debug_panel import init_debug_panel
+
+    init_debug_panel()
+    _apply_debug_setting()
+    settings().add_on_change('acp_debug', _apply_debug_setting)
 
 
 def _stop_all_daemons() -> None:
@@ -47,6 +57,12 @@ def plugin_unloaded():
     """Stop all daemons and clean up on package disable/reload."""
     _stop_idle_timer()
     _stop_all_daemons()
+    try:
+        from .modules.debug_panel import clear_panel_cache
+
+        clear_panel_cache()
+    except Exception:
+        pass
     try:
         from .modules.broadcast import erase_broadcast_status
         erase_broadcast_status(STATUS_KEY_DAEMON)

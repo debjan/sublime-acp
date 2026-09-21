@@ -1,0 +1,41 @@
+%YAML 1.2
+---
+hidden: true
+scope: output.acp.log
+
+contexts:
+  main:
+    - match: ^(\[\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?\])
+      captures:
+        1: constant.numeric.timestamp.acp
+      push: tag
+    - match: ^(?=\s*$)
+      pop: true
+
+  tag:
+    - match: (\[ACP:)([A-Za-z0-9_.-]+)(\])
+      captures:
+        1: punctuation.section.brackets.begin.acp
+        2: variable.function.acp
+        3: punctuation.section.brackets.end.acp
+      set: message
+    - match: $
+      pop: true
+
+  message:
+    - match: $
+      pop: true
+    - match: \b[a-zA-Z_][a-zA-Z0-9_.-]*=
+      scope: entity.other.attribute-name.acp
+    - match: "'(?:[^'\\\\]|\\\\.)*'"
+      scope: string.quoted.single.acp
+    - match: '"(?:[^"\\\\]|\\\\.)*"'
+      scope: string.quoted.double.acp
+    - match: \b(pid=\d+|thread=\d+|proc=\d+|sid=[A-Za-z0-9_.-]+)\b
+      scope: constant.other.acp
+    - match: \b\d+\s+commands\b
+      scope: constant.numeric.acp
+    - match: \b(Traceback|Error|error|ERROR|failed|Failed|FAILED|timed out|TIMEOUT|Traceback)\b
+      scope: invalid.illegal.acp
+    - match: \b(succeeded|success|spawned|started)\b
+      scope: markup.inserted.acp

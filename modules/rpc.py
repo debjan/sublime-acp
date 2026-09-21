@@ -205,8 +205,7 @@ def _flush_thoughts(
     """Emit buffered thoughts for the given mode; return True if any were emitted.
 
     ``'enabled'`` buffers thoughts into a blockquote delivered through
-    *callback* (or ``stdout``); ``'console'`` writes the raw buffer to
-    ``stderr``; ``'disabled'`` drops them entirely.
+    *callback* (or ``stdout``); ``'disabled'`` drops them entirely.
     """
     if thoughts_mode == 'enabled':
         if flushed := _flush_thought_buffer(thought_buf):
@@ -214,13 +213,6 @@ def _flush_thoughts(
                 callback(flushed)
             else:
                 sys.stdout.write(flushed)
-        return bool(flushed)
-    if thoughts_mode == 'console':
-        flushed = ''.join(thought_buf)
-        thought_buf.clear()
-        if flushed:
-            sys.stderr.write(flushed + '\n')
-            sys.stderr.flush()
         return bool(flushed)
     thought_buf.clear()
     return False
@@ -387,7 +379,7 @@ def format_replay_update(update: dict, thoughts_mode: str = 'enabled',
     Args:
         update: The ``update`` dict from ``session/update`` params.
         thoughts_mode: ``'enabled'`` includes thoughts as blockquotes;
-            ``'console'``/``'disabled'`` drops them.
+            ``'disabled'`` drops them.
         show_tool_calls: When ``False``, tool call updates render nothing.
         tool_state: Mutable dict tracking partial tool calls by ID; a fresh
             one is used when omitted (callers should pass a shared dict so
@@ -408,13 +400,18 @@ def format_replay_update(update: dict, thoughts_mode: str = 'enabled',
     if kind in ('agent_message', 'agent_message_chunk'):
         return _replay_text(update) or None
     if kind in ('agent_thought_chunk', 'thought'):
-        if thoughts_mode != 'enabled':
+        if thoughts_mode == 'disabled':
             return None
         if text := _replay_text(update):
+            pass
+        else:
+            # Chunk-style thought without content dict (rpc stream shape).
+            text = update.get('text', '') if isinstance(update.get('text'), str) else ''
+        if not text.strip():
+            return None
+        if thoughts_mode == 'enabled':
             return _format_blockquote(text)
-        # Chunk-style thought without content dict (rpc stream shape).
-        text = update.get('text', '') if isinstance(update.get('text'), str) else ''
-        return _format_blockquote(text) if text.strip() else None
+        return None
     if kind in _TOOL_CALL_DISCRIMINATORS:
         if not show_tool_calls:
             return None
@@ -881,7 +878,7 @@ def _emit_text(state: _StreamState, chunk: str, thoughts_mode: str, callback: An
     had_thoughts = _flush_thoughts(state.thought_buf, thoughts_mode, callback)
     if state.last_was_tool:
         chunk = '\n' + chunk
-    if thoughts_mode in ('enabled', 'console') and had_thoughts:
+    if thoughts_mode == 'enabled' and had_thoughts:
         chunk = '\n' + chunk
         state.at_turn_start = False
     elif state.at_turn_start:
@@ -989,7 +986,6 @@ def _dispatch_stream_notification(
             on_usage(used, size)
         return
     if show_tool_calls and (bullet := _consume_tool_call(state, params)):
-        acp_log('rpc', f'send_prompt_and_stream: tool call rendered: {bullet}')
         _emit_tool_bullet(state, bullet, thoughts_mode, callback)
         return
     chunks = _handle_session_update_notification({'method': method, 'params': params})
@@ -1067,12 +1063,6 @@ def _flush_stream_tail(
     flushed = ''
     if thoughts_mode == 'enabled':
         flushed = _flush_thought_buffer(state.thought_buf)
-    elif thoughts_mode == 'console':
-        flushed = ''.join(state.thought_buf)
-        state.thought_buf.clear()
-        if flushed:
-            sys.stderr.write(flushed + '\n')
-            sys.stderr.flush()
     texts = _handle_prompt_result({'result': result})
     all_text = '\n'.join(texts)
     if thoughts_mode == 'enabled' and flushed and all_text:
@@ -1142,8 +1132,7 @@ async def send_prompt_and_stream(
             ``optionId`` (or ``None`` to cancel) for interactive permission
             prompts. Only used when ``mode == 'daemon'``.
         thoughts_mode: ``'enabled'`` (default) streams thoughts to *callback*
-            as blockquotes; ``'console'`` writes thoughts to ``stderr``;
-            ``'disabled'`` drops thoughts entirely.
+            as blockquotes; ``'disabled'`` drops thoughts entirely.
         on_commands: Optional callable invoked with the command list from any
             ``available_commands_update`` notification seen while streaming.
         on_usage: Optional callable ``on_usage(used, size)`` invoked with
@@ -1237,8 +1226,7 @@ async def acp(
             auto-reject handling.
         auth: Override authentication behavior; see :func:`spawn_and_init`.
         thoughts_mode: ``'enabled'`` (default) streams thoughts to *callback*
-            as blockquotes; ``'console'`` writes thoughts to ``stderr``;
-            ``'disabled'`` drops thoughts entirely.
+            as blockquotes; ``'disabled'`` drops thoughts entirely.
         show_tool_calls: When ``True`` (default), render each tool call that
             reaches a terminal status as a single-line markdown bullet.
 
