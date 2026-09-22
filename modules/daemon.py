@@ -269,6 +269,7 @@ def _update_agent_session_id(cmd, session_id):
     try:
         cache.update_session_id(_cache_dir(), cmd, session_id)
     except Exception as e:
+        acp_log('daemon', f'failed to update session ID: {e}')
         msg = f'✗ Failed to update session ID: {e}'
         ui.on_main(lambda: sublime.status_message(msg))
 
@@ -278,6 +279,7 @@ def _clear_agent_session_id(cmd):
     try:
         cache.clear_session_id(_cache_dir(), cmd)
     except Exception as e:
+        acp_log('daemon', f'failed to clear session ID: {e}')
         msg = f'✗ Failed to clear session ID: {e}'
         ui.on_main(lambda: sublime.status_message(msg))
 
@@ -499,14 +501,19 @@ def _safe_shutdown_loop(loop):
         loop.close()
 
 
-def _maybe_reset_daemon_on_exit(window_id: int, cmd, agent_name, state):
+def _maybe_reset_daemon_on_exit(window_id: int, cmd, agent_name, state,
+                                error_exit: bool = False):
     """Reset daemon state and remove from registry if the agent command matches."""
     if state and state.get('agent_cmd') == cmd:
         def _on_exit():
             state.reset()
             if get_state(window_id) is state:
                 remove_state(window_id)
-            sublime.status_message(f"✓ Agent '{agent_name}' stopped")
+            if error_exit:
+                sublime.status_message(f"✗ Agent '{agent_name}' failed - log preserved")
+            else:
+                debug_panel.destroy_window_log(window_id)
+                sublime.status_message(f"✓ Agent '{agent_name}' stopped")
         ui.on_main(_on_exit)
 
 # One-shot worker thread
@@ -545,6 +552,8 @@ def _run_acp_worker(
     window_id = output_view.window().id() if output_view.window() is not None else None
     args = (on_chunk, cmd, prompt, model, system_prompt, work_dir, env, timeout, session_id, settings, permissions_config, auth, window_id)
     thread = threading.Thread(target=_worker_thread, args=args, daemon=True)
+
+    acp_log('worker', f'one-shot worker started: cmd={cmd}, model={model}, session_id={session_id}', window_id)
 
     def _on_done():
         output_view.set_status('acp_status', '✓ ACP Request Complete!')
@@ -633,6 +642,7 @@ def _worker_thread(
                     on_chunk(f'\n**[{session_error}]**\n\n')
                 on_chunk('\n**[Started new session]**\n\n')
             _update_agent_session_id(cmd, result_session_id)
+        acp_log('worker', f'one-shot complete: status={status}, sid={result_session_id}, session_error={session_error}', window_id)
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
@@ -643,6 +653,7 @@ def _worker_thread(
     try:
         loop.run_until_complete(async_wrapper())
     except Exception as exc:
+        acp_log('worker', f'one-shot worker raised: {exc}', window_id)
         on_chunk(f'\n**[Agent Error]:** `{exc}`\n')
     finally:
         dividers = settings.get('turn_dividers', True) if settings is not None else True
@@ -658,6 +669,7 @@ _idle_timer_active: dict[int, bool] = {}
 def _start_idle_timer(window_id: int):
     """Start the idle timeout check timer for a window."""
     _idle_timer_active[window_id] = True
+    acp_log('daemon_session', f'idle timer started (timeout={load_settings().get("daemon_idle_timeout", IDLE_TIMEOUT_DEFAULT)}s)', window_id)
     _check_idle_timeout(window_id)
 
 
@@ -683,6 +695,7 @@ def _check_idle_timeout(window_id: int):
     if idle_exceeded:
         agent_name = state.get('agent_name') or 'unknown'
         _idle_timer_active.pop(window_id, None)
+        acp_log('daemon_session', f'idle timeout exceeded ({idle_timeout}s) - stopping daemon', window_id)
 
         def _stop_via_command():
             _stop_daemon_async(window_id)
@@ -704,7 +717,11 @@ def _stop_idle_timer(window_id: int | None = None):
 # Prompt execution
 
 def _handle_daemon_stopped(state: DaemonState, window_id: int) -> None:
-    """Reset daemon state after an unexpected loop/thread failure."""
+    """Reset daemon state after an unexpected loop/thread failure.
+
+    The debug log panel is deliberately preserved for post-mortem analysis.
+    """
+    acp_log('daemon_session', 'daemon stopped unexpectedly - resetting state', window_id)
     state.reset(_stop_idle_timer)
     remove_state(window_id)
     sublime.status_message('ACP daemon stopped unexpectedly')
@@ -753,6 +770,7 @@ def _execute_prompt_daemon(prompt: str, source_view,
             await queue.put(prompt)
         try:
             asyncio.run_coroutine_threadsafe(_enqueue(), loop)
+            acp_log('daemon_session', f'prompt enqueued to daemon ({len(prompt)} chars)', window_id)
         except RuntimeError:
             _handle_daemon_stopped(state, window_id)
 
@@ -1039,6 +1057,7 @@ def _submit_daemon_task(loop, task_factory: Callable, on_done: Callable | None):
 def _finish_session_change(state, cmd, sid, ok, error, success_view, success_status,
                            fail_view, fail_status, on_done, replay_text=None) -> None:
     if ok:
+        acp_log('session_change', f'ok: sid={sid}', state.get('window_id'))
         _update_agent_session_id(cmd, sid)
         state.set(
             session_id=sid,
@@ -1055,6 +1074,7 @@ def _finish_session_change(state, cmd, sid, ok, error, success_view, success_sta
         broadcast.erase_broadcast_status(STATUS_KEY_USAGE, _window_for_state(state))
         sublime.status_message(success_status(sid))
     else:
+        acp_log('session_change', f'failed: {error}', state.get('window_id'))
         output_view = state.get('output_view')
         if output_view is not None:
             ui.append_to_output_view(output_view, fail_view(error))
@@ -1376,7 +1396,7 @@ def _daemon_thread_main(
                         state.set(proc=proc, conn=conn, session_id=sid)
                 first_prompt = False
 
-                acp_log('daemon_session', 'prompt completed')
+                acp_log('daemon_session', f'prompt completed: status={ok}')
                 async_queue.task_done()
                 try:
                     summary = git_summary.summarize(
@@ -1419,6 +1439,7 @@ def _daemon_thread_main(
 
         return state.get('session_id'), 'new'
 
+    sid, status = None, 'error'
     try:
         acp_log('daemon_session', 'running _wrapper() via loop.run_until_complete()')
         sid, status = loop.run_until_complete(_wrapper())
@@ -1438,7 +1459,10 @@ def _daemon_thread_main(
         acp_log('daemon_session', 'daemon thread finally - shutting down loop and resetting state')
         _safe_shutdown_loop(loop)
         state.set(running=False)
-        _maybe_reset_daemon_on_exit(window_id, cmd, agent_name, state)
+        _maybe_reset_daemon_on_exit(
+            window_id, cmd, agent_name, state,
+            error_exit=status == 'error',
+        )
         acp_log('daemon_session', 'daemon thread exiting')
 
 # Stop daemon
@@ -1510,7 +1534,7 @@ def _stop_daemon(window_id: int, join_timeout: float = 5.0) -> None:
     else:
         acp_log('daemon_session', 'daemon state already cleaned up by thread exit')
 
-    debug_panel.clear_window_log(window_id)
+    debug_panel.destroy_window_log(window_id)
 
 
 def _stop_daemon_async(window_id: int, on_done: Callable[[], None] | None = None) -> None:

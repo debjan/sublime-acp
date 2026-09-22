@@ -17,6 +17,7 @@ from ..protocol import (
     STATUS_NEW,
     STATUS_RESUMED,
     ACPError,
+    AgentSpawnError,
     Connection,
     acp_log,
     cleanup_process,
@@ -625,8 +626,10 @@ async def _handle_fs_read_text_file_sync(workspace_root: str, params: dict[str, 
 
     file_path = _validate_workspace_path(workspace_root, path_str)
     if file_path is None:
+        acp_log('rpc', f'fs/read denied: path outside workspace: {path_str!r}')
         return {'error': {'code': -32602, 'message': 'Path outside workspace'}}
     if not file_path.is_file():
+        acp_log('rpc', f'fs/read denied: file not found: {path_str!r}')
         return {'error': {'code': -32602, 'message': 'File not found'}}
 
     try:
@@ -649,6 +652,7 @@ async def _handle_fs_write_text_file_sync(workspace_root: str, params: dict[str,
 
     file_path = _validate_workspace_path(workspace_root, path_str)
     if file_path is None:
+        acp_log('rpc', f'fs/write denied: path outside workspace: {path_str!r}')
         return {'error': {'code': -32602, 'message': 'Path outside workspace'}}
 
     try:
@@ -702,7 +706,9 @@ async def _check_fs_permission(
         on_permission_prompt,
     )
     if opt_id == _FS_ALLOW_OPTION_ID:
+        acp_log('rpc', f'fs/{tool_kind} allowed: {title}')
         return True
+    acp_log('rpc', f'fs/{tool_kind} denied: {title}')
     await conn.respond_with_error(msg_id, -32000, 'Permission denied')
     return False
 
@@ -721,7 +727,11 @@ async def probe_agent(cmd: list[str], env: dict | None = None) -> dict | None:
     dict and never holds a reference to the process or connection.
     """
     acp_log('rpc', f'probe_agent: cmd={cmd}')
-    proc, reader, writer = await spawn_subprocess(cmd, env, cwd=None)
+    try:
+        proc, reader, writer = await spawn_subprocess(cmd, env, cwd=None)
+    except (AgentSpawnError, OSError) as exc:
+        acp_log('rpc', f'probe_agent: subprocess spawn failed: {exc}')
+        raise
     acp_log('rpc', f'probe_agent: subprocess spawned (pid={proc.pid})')
     conn = Connection(reader, writer)
     conn.request_callback = _make_request_callback(
@@ -759,6 +769,7 @@ async def list_config(cmd: list[str], env: dict | None = None, command_timeout: 
     ``available_commands_update`` notifications. Returns the config options
     and any collected commands.
     """
+    acp_log('rpc', f'list_config: probing cmd={cmd}, command_timeout={command_timeout}s')
     result = await spawn_and_init(cmd, env)
     if result is None:
         return None
@@ -799,6 +810,8 @@ async def list_config(cmd: list[str], env: dict | None = None, command_timeout: 
 
     if collected_commands is not None:
         config['commands'] = collected_commands
+    else:
+        acp_log('rpc', f'list_config: no available_commands within {command_timeout}s')
 
     await _close_connection(proc, conn)
     return config
@@ -840,7 +853,11 @@ async def spawn_and_init(
     """
     acp_log('rpc', f'spawn_and_init: cmd={cmd}, session_id={session_id}, auth={auth}')
 
-    proc, reader, writer = await spawn_subprocess(cmd, env, cwd)
+    try:
+        proc, reader, writer = await spawn_subprocess(cmd, env, cwd)
+    except (AgentSpawnError, OSError) as exc:
+        acp_log('rpc', f'spawn_and_init: subprocess spawn failed: {exc}')
+        raise
     acp_log('rpc', f'spawn_and_init: subprocess spawned (pid={proc.pid})')
 
     conn = Connection(reader, writer)
@@ -1011,8 +1028,10 @@ async def _handle_stream_request(
         conn, msg_id, method, params,
         ws_root, permissions_config, mode, on_permission_prompt,
     )
-    if not handled and method == 'terminal/create':
-        await conn.respond_with_error(msg_id, -32601, 'Terminal not supported')
+    if not handled:
+        acp_log('rpc', f'unhandled agent request: {method}')
+        if method == 'terminal/create':
+            await conn.respond_with_error(msg_id, -32601, 'Terminal not supported')
 
 
 async def _send_prompt_request(
@@ -1044,7 +1063,6 @@ async def _send_prompt_request(
             callback(f'*[Response stream timed out after {callback_timeout}s of inactivity]*')
         with contextlib.suppress(Exception):
             await conn.send_notification('session/cancel', {'sessionId': session_id})
-            await conn.send_notification('$/cancel_request', {'requestId': conn.last_request_id})
         return None, PROMPT_TIMEOUT
     except ConnectionError as exc:
         acp_log('rpc', f'send_prompt_and_stream: agent closed connection: {exc}')

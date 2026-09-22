@@ -13,7 +13,7 @@ import sublime
 import sublime_plugin
 
 from ..protocol import acp_log
-from . import broadcast, cache, file_walker, ui
+from . import broadcast, cache, debug_panel, file_walker, ui
 from .config import (
     CACHE_TTL_DEFAULT,
     DEFAULT_TIMEOUT,
@@ -119,16 +119,20 @@ def _format_local_time(value: Any) -> str | None:
 
 
 def _display_title(session: dict) -> str:
-    """Return a session title, hiding auto-generated system-prompt titles."""
+    """Return a session title, falling back to the full session ID."""
     from .config import SESSION_PROMPT
-    title = (session.get('title') or '').strip()
-    if not title:
+
+    if title := (session.get('title') or '').strip():
         return session.get('sessionId', 'untitled')
-    normalized_title = ' '.join(title.split())
-    prompt_head = ' '.join(SESSION_PROMPT.split())
-    if normalized_title.startswith(prompt_head[:40]) or prompt_head[:60] in normalized_title:
-        return '(no title)'
-    return title or session.get('sessionId', 'untitled')
+        normalized_title = ' '.join(title.split())
+        prompt_head = ' '.join(SESSION_PROMPT.split())
+        is_echo = (
+            normalized_title.startswith(prompt_head[:40])
+            or prompt_head[:60] in normalized_title
+        )
+        if not is_echo:
+            return title
+    return session.get('sessionId', 'untitled') or 'untitled'
 
 
 def _input_panel_kwargs(cmd, model, env, timeout, system_prompt,
@@ -414,6 +418,7 @@ class AcpStartCommand(sublime_plugin.WindowCommand):
         ui.open_split_for_output(self.window, output_view)
 
         window_id = self.window.id()
+        debug_panel.clear_window_log(window_id)
 
         # Register per-window daemon state BEFORE spawning the thread (avoids race)
         state = DaemonState()
@@ -452,11 +457,13 @@ class AcpStartCommand(sublime_plugin.WindowCommand):
         def on_done():
             state = get_state(window_id)
             if state is None or not state.is_running():
+                acp_log('daemon_session', f'init failed for "{agent_name}" - no running daemon', window_id)
                 broadcast.set_broadcast_status(STATUS_KEY_DAEMON, f'✗ Failed to initialize agent "{agent_name}"', daemon_window)
                 ui.on_main(lambda: broadcast.erase_broadcast_status(STATUS_KEY_DAEMON, daemon_window), 5000)
                 return
 
             if not state.get('is_busy'):
+                acp_log('daemon_session', f'init completed for "{agent_name}"', window_id)
                 broadcast.set_broadcast_status(STATUS_KEY_DAEMON, broadcast.daemon_status_text(agent_name, state.get('agent_cmd')), daemon_window)
                 _start_idle_timer(window_id)
                 self.window.run_command(
@@ -521,7 +528,9 @@ class AcpSwitchSessionCommand(sublime_plugin.WindowCommand):
         title = _display_title(s)
         updated = _format_local_time(s.get('updatedAt'))
         sid = s.get('sessionId', '')
-        detail = f'{sid[-8:]}' if len(sid) > 8 else sid
+        # Show the full ID when it is human-readable (e.g. "married-gooseberry");
+        # only shorten long opaque IDs to keep the row readable.
+        detail = sid if len(sid) <= 32 else f'…{sid[-16:]}'
         if updated:
             detail = f'{updated} · {detail}'
         return [title, detail]
@@ -789,8 +798,12 @@ class AcpInterruptCommand(sublime_plugin.WindowCommand):
                     asyncio.run_coroutine_threadsafe(
                         conn.cancel_pending_request(msg_id, sid), loop,
                     )
+                    acp_log('daemon_session', f'interrupt sent: msg_id={msg_id}, sid={sid}', window_id)
                     sublime.status_message('ACP: Interrupted')
+                else:
+                    acp_log('daemon_session', 'interrupt skipped: no pending request id', window_id)
             except RuntimeError:
+                acp_log('daemon_session', 'interrupt failed: daemon already stopped', window_id)
                 sublime.status_message('ACP: daemon already stopped')
         if output_view := state.get('output_view'):
             ui.append_to_output_view(output_view, '\n*[Interrupted]*\n')

@@ -26,7 +26,7 @@ from .modules.daemon import (
     request_unload,
     stop_all_daemons,
 )
-from .modules.debug_panel import AcpUpdateLogPanelCommand
+from .modules.debug_panel import AcpClearLogPanelCommand, AcpUpdateLogPanelCommand
 
 
 def _apply_debug_setting() -> None:

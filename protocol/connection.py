@@ -151,14 +151,14 @@ class Connection:
     async def cancel_pending_request(
         self, msg_id: int, session_id: str | None = None,
     ) -> bool:
-        """Send session/cancel and $/cancel_request, then cancel a pending request.
+        """Send ``session/cancel``, then cancel a pending request.
 
         When *session_id* is given, first sends the ACP ``session/cancel``
         notification so the agent aborts the active prompt turn (it then
         responds to the original ``session/prompt`` with a ``cancelled`` stop
-        reason). Then sends ``$/cancel_request`` and cancels the matching
-        pending future so that ``send_request()`` unblocks. The connection
-        stays alive, preserving the session.
+        reason). Then cancels the matching pending future so that
+        ``send_request()`` unblocks. The connection stays alive, preserving
+        the session.
         """
         future = self._pending.pop(msg_id, None)
         if future is None:
@@ -168,7 +168,6 @@ class Connection:
                 await self.send_notification('session/cancel', {'sessionId': session_id})
             except Exception as exc:
                 acp_log('connection', f'Failed to send session/cancel: {exc}')
-        await self.send_notification('$/cancel_request', {'requestId': msg_id})
         if not future.done():
             future.cancel()
         return True

@@ -89,6 +89,7 @@ async def resolve_session(
                 })
                 return session_id, STATUS_RESUMED, None, None
             except ACPError as exc:
+                acp_log('session', f'session/resume failed: {exc} - falling back to a new session')
                 return await _fallback_new(
                     conn, base_params, f'Could not resume session: {exc}',
                 )
@@ -99,10 +100,12 @@ async def resolve_session(
                 })
                 return session_id, STATUS_LOADED, None, None
             except ACPError as exc:
+                acp_log('session', f'session/load failed: {exc} - falling back to a new session')
                 return await _fallback_new(
                     conn, base_params, f'Could not load previous session: {exc}',
                 )
         else:
+            acp_log('session', 'agent does not support session resume or load - falling back to a new session')
             return await _fallback_new(
                 conn, base_params,
                 'Agent does not support session resume or load',

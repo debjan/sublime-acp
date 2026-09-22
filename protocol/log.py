@@ -50,7 +50,7 @@ def acp_log(tag: str, msg: str, window_id: int | None = None) -> None:
     """
     if os.environ.get('ACP_DEBUG', '').lower() not in _TRUTHY:
         return
-    line = f'[{datetime.now().isoformat(timespec="seconds")}] [ACP:{tag}] {msg}'
+    line = f'[{datetime.now().strftime("%H:%M:%S")}] [ACP:{tag}] {msg}'
     wid = window_id if window_id is not None else _window_ctx.get()
     if _sink is not None:
         with contextlib.suppress(Exception):

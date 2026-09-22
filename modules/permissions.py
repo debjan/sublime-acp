@@ -25,6 +25,7 @@ _active_prompts: dict[int, Callable[[str | None], None]] = {}
 def _resolve_auto_permission(
     params: dict[str, Any],
     permissions_config: dict | None = None,
+    window_id: int | None = None,
 ) -> tuple[str, str | None]:
     if permissions_config is None:
         permissions_config = DEFAULT_PERMISSIONS
@@ -36,17 +37,22 @@ def _resolve_auto_permission(
     auto_reject = permissions_config.get('auto_reject', DEFAULT_PERMISSIONS['auto_reject'])
     auto_allow = permissions_config.get('auto_allow', DEFAULT_PERMISSIONS['auto_allow'])
 
+    outcome: tuple[str, str | None] = ('prompt', None)
     for pattern in auto_reject:
         if fnmatch.fnmatch(tool_kind, pattern):
-            return ('cancelled', None)
-
-    for pattern in auto_allow:
-        if fnmatch.fnmatch(tool_kind, pattern):
-            if options:
-                return ('selected', options[0].get('optionId'))
-            return ('selected', None)
-
-    return ('prompt', None)
+            outcome = ('cancelled', None)
+            break
+    else:
+        for pattern in auto_allow:
+            if fnmatch.fnmatch(tool_kind, pattern):
+                outcome = ('selected', options[0].get('optionId')) if options else ('selected', None)
+                break
+    acp_log(
+        'permissions',
+        f'auto-{outcome[0]} for kind {tool_kind!r} (optionId={outcome[1]!r})',
+        window_id,
+    )
+    return outcome
 
 
 _TRUNCATE_MAX_CHARS = 160
@@ -165,6 +171,7 @@ async def _prompt_user(
         # Supersede any stale waiter still registered for this window.
         prior = _active_prompts.pop(window_id, None)
         if prior is not None:
+            acp_log('permissions', 'previous permission prompt superseded - denying', window_id)
             prior(None)
         _active_prompts[window_id] = _on_done
 
@@ -199,7 +206,7 @@ async def resolve_permission(
     loop: asyncio.AbstractEventLoop | None = None,
     timeout: float = PERMISSION_PROMPT_TIMEOUT,
 ) -> str | None:
-    outcome, option_id = _resolve_auto_permission(params, permissions_config)
+    outcome, option_id = _resolve_auto_permission(params, permissions_config, window_id)
     if outcome == 'selected':
         return option_id
     if outcome == 'cancelled':
