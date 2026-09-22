@@ -16,6 +16,7 @@ import subprocess
 import sys
 from typing import Any
 
+from .compat import TIMEOUT_EXCEPTIONS
 from .log import acp_log
 
 
@@ -75,7 +76,7 @@ async def _stop_stderr_pump(proc, drain_timeout: float | None = None) -> None:
     if task.done():
         return
     if drain_timeout is not None:
-        with contextlib.suppress(asyncio.TimeoutError, Exception):
+        with contextlib.suppress(*TIMEOUT_EXCEPTIONS, Exception):
             await asyncio.wait_for(asyncio.shield(task), drain_timeout)
             return
     task.cancel()
@@ -238,7 +239,7 @@ async def _cleanup_proc_impl(
             signal_process_group(proc.pid, kill=False)
             await asyncio.wait_for(proc.wait(), timeout=2.0)
             acp_log('transports', f'_cleanup_proc_impl: terminated, returncode={proc.returncode}')
-    except asyncio.TimeoutError:
+    except TIMEOUT_EXCEPTIONS:
         acp_log('transports', f'_cleanup_proc_impl: terminate timed out (2s) for pid={proc_pid}')
     except Exception as e:
         acp_log('transports', f'_cleanup_proc_impl: error terminating process: {e}')

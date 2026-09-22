@@ -9,7 +9,7 @@ from typing import Any, Callable
 
 import sublime
 
-from ..protocol import acp_log
+from ..protocol import TIMEOUT_EXCEPTIONS, acp_log
 from . import ui
 from .config import DEFAULT_PERMISSIONS, PERMISSION_PROMPT_TIMEOUT
 
@@ -17,9 +17,33 @@ from .config import DEFAULT_PERMISSIONS, PERMISSION_PROMPT_TIMEOUT
 # quick panel per window; concurrent show_quick_panel calls displace each
 # other and the displaced panel's on_done never fires.
 _prompt_locks: dict[int, asyncio.Lock] = {}
+# window_id -> running loop the lock above was created on. Daemon restarts
+# create a new event loop, and an asyncio.Lock bound to the old (closed)
+# loop raises on 3.10+; tracking the loop lets us recreate stale locks.
+_prompt_lock_loops: dict[int, asyncio.AbstractEventLoop] = {}
 # window_id -> callable resolving the currently displayed prompt (supersede
 # fail-safe so a displaced/abandoned waiter can never hang forever).
 _active_prompts: dict[int, Callable[[str | None], None]] = {}
+
+
+def _lock_for_window(window_id: int) -> asyncio.Lock:
+    running = asyncio.get_running_loop()
+    lock = _prompt_locks.get(window_id)
+    if lock is None or _prompt_lock_loops.get(window_id) is not running:
+        lock = asyncio.Lock()
+        _prompt_locks[window_id] = lock
+        _prompt_lock_loops[window_id] = running
+    return lock
+
+
+def invalidate_prompt_lock(window_id: int) -> None:
+    """Drop the cached prompt lock for *window_id*.
+
+    Called when a daemon stops so a later daemon (with a new event loop)
+    never reuses a lock bound to the closed loop.
+    """
+    _prompt_locks.pop(window_id, None)
+    _prompt_lock_loops.pop(window_id, None)
 
 
 def _resolve_auto_permission(
@@ -147,7 +171,7 @@ async def _prompt_user(
     this prompt is superseded by another) ``None`` is returned, which the
     caller treats as a cancel/deny.
     """
-    lock = _prompt_locks.setdefault(window_id, asyncio.Lock())
+    lock = _lock_for_window(window_id)
     async with lock:
         event = asyncio.Event()
         result: list = []
@@ -184,7 +208,7 @@ async def _prompt_user(
                     await asyncio.wait_for(event.wait(), timeout)
                 else:
                     await event.wait()
-            except asyncio.TimeoutError:
+            except TIMEOUT_EXCEPTIONS:
                 acp_log(
                     'permissions',
                     f'permission prompt timed out after {timeout}s - denying',

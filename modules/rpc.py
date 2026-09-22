@@ -16,6 +16,7 @@ from ..protocol import (
     STATUS_LOADED,
     STATUS_NEW,
     STATUS_RESUMED,
+    TIMEOUT_EXCEPTIONS,
     ACPError,
     AgentSpawnError,
     Connection,
@@ -36,6 +37,12 @@ PROMPT_SESSION_NOT_FOUND = 'session_not_found'
 PROMPT_TIMEOUT = 'timeout'
 PROMPT_CONNECTION_CLOSED = 'connection_closed'
 PROMPT_CANCELLED = 'cancelled'
+
+# Combined exception tuples built from TIMEOUT_EXCEPTIONS so all timeout
+# variants (asyncio.TimeoutError on 3.8, builtin TimeoutError on 3.11+)
+# are covered without repeating the pair at every call site.
+_ACP_TIMEOUT = (ACPError, *TIMEOUT_EXCEPTIONS)
+_ACP_TRANSPORT = (ACPError, *TIMEOUT_EXCEPTIONS, ConnectionError)
 
 _INITIALIZE_PARAMS = {
     'protocolVersion': PROTOCOL_VERSION,
@@ -530,7 +537,7 @@ async def _handle_init_phase(
                     )
                 else:
                     confirmed_model = model
-            except (ACPError, asyncio.TimeoutError) as exc:
+            except _ACP_TIMEOUT as exc:
                 acp_log(
                     'rpc',
                     f'_handle_init_phase: failed to set model {model}: {type(exc).__name__}: {exc}',
@@ -552,7 +559,7 @@ async def _handle_init_phase(
             'initialize_result': result,
         }
 
-    except (ACPError, asyncio.TimeoutError, ConnectionError) as exc:
+    except _ACP_TRANSPORT as exc:
         acp_log('rpc', f'_handle_init_phase: init failed: {exc}')
         return None
 
@@ -742,7 +749,7 @@ async def probe_agent(cmd: list[str], env: dict | None = None) -> dict | None:
     )
     try:
         result = await conn.send_request('initialize', _INITIALIZE_PARAMS)
-    except (ACPError, asyncio.TimeoutError, ConnectionError) as exc:
+    except _ACP_TRANSPORT as exc:
         acp_log('rpc', f'probe_agent: failed: {exc}')
         result = None
     finally:
@@ -805,7 +812,7 @@ async def list_config(cmd: list[str], env: dict | None = None, command_timeout: 
         on_notification,
         _make_request_callback(on_request),
     ):
-        with contextlib.suppress(asyncio.TimeoutError):
+        with contextlib.suppress(*TIMEOUT_EXCEPTIONS):
             await asyncio.wait_for(commands_event.wait(), timeout=command_timeout)
 
     if collected_commands is not None:
@@ -1057,7 +1064,7 @@ async def _send_prompt_request(
         if 'session not found' in exc.message.lower():
             return None, PROMPT_SESSION_NOT_FOUND
         return None, PROMPT_ERROR
-    except asyncio.TimeoutError:
+    except TIMEOUT_EXCEPTIONS:
         acp_log('rpc', f'send_prompt_and_stream: timeout after {callback_timeout}s of inactivity')
         if callback:
             callback(f'*[Response stream timed out after {callback_timeout}s of inactivity]*')

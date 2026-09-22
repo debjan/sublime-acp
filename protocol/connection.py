@@ -12,6 +12,7 @@ import contextlib
 import json
 from typing import Any, AsyncIterator, Callable
 
+from .compat import TIMEOUT_EXCEPTIONS, loop_time
 from .log import acp_log
 from .schema import (
     make_error_response,
@@ -90,7 +91,7 @@ class Connection:
         self._last_request_id: int | None = None
         self._pending: dict[int, asyncio.Future] = {}
         self._reader_task: asyncio.Task | None = asyncio.ensure_future(self.read_loop())
-        self._last_activity: float = asyncio.get_event_loop().time()
+        self._last_activity: float = loop_time()
 
         # Callbacks for unsolicited messages from the agent
         self.notification_callback: Callable[[str, dict[str, Any]], Any] | None = None
@@ -130,9 +131,9 @@ class Connection:
         self._pending[msg_id] = future
 
         await self._write_raw(make_request(msg_id, method, params))
-        self._last_activity = asyncio.get_event_loop().time()
+        self._last_activity = loop_time()
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         try:
             while True:
                 remaining = timeout - (loop.time() - self._last_activity)
@@ -143,7 +144,7 @@ class Connection:
                 done, _ = await asyncio.wait((future,), timeout=remaining)
                 if future in done:
                     return future.result()
-        except asyncio.TimeoutError:
+        except TIMEOUT_EXCEPTIONS:
             future.cancel()
             self._pending.pop(msg_id, None)
             raise
@@ -270,7 +271,7 @@ class Connection:
         if not raw:
             return True
 
-        self._last_activity = asyncio.get_event_loop().time()
+        self._last_activity = loop_time()
 
         try:
             msg = _decode_json(raw)

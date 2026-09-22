@@ -1,5 +1,7 @@
 """Shared constants and settings accessor for the ACP plugin."""
 
+from __future__ import annotations
+
 import sublime
 
 _SETTINGS_FILE = 'ACP.sublime-settings'

@@ -1,5 +1,7 @@
 """Project file enumeration with gitignore rules."""
 
+from __future__ import annotations
+
 import os
 import threading
 import time

@@ -1,5 +1,7 @@
 """File and slash-command auto-completions for the ACP input panel."""
 
+from __future__ import annotations
+
 import sublime
 import sublime_plugin
 

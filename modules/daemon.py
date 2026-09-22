@@ -22,12 +22,15 @@ from ..protocol import (
     STATUS_LOADED,
     STATUS_NEW,
     STATUS_RESUMED,
+    TIMEOUT_EXCEPTIONS,
     ACPError,
     acp_log,
     cleanup_process,
+    clear_thread_loop,
     close_writer,
     list_sessions,
     load_session_with_replay,
+    new_daemon_loop,
     new_session,
     signal_process_group,
     supports_list,
@@ -47,7 +50,11 @@ from .config import (
     TURN_DIVIDER,
 )
 from .config import settings as load_settings
-from .permissions import dismiss_permission_prompt, resolve_permission
+from .permissions import (
+    dismiss_permission_prompt,
+    invalidate_prompt_lock,
+    resolve_permission,
+)
 from .rpc import (
     PROMPT_CONNECTION_CLOSED,
     PROMPT_OK,
@@ -59,6 +66,11 @@ from .rpc import (
     send_prompt_and_stream,
     spawn_and_init,
 )
+
+# Combined exception tuple for transport-layer catches. Built from
+# TIMEOUT_EXCEPTIONS so both asyncio.TimeoutError (3.8) and builtin
+# TimeoutError (3.11+) are covered without inline repetition.
+_ACP_TRANSPORT = (ACPError, *TIMEOUT_EXCEPTIONS, ConnectionError)
 
 # Per-window daemon registry
 
@@ -168,6 +180,9 @@ class DaemonState:
 
         if stop_idle_timer_func:
             stop_idle_timer_func(window_id)
+
+        if window_id is not None:
+            invalidate_prompt_lock(window_id)
 
         if permission_pending and window_id is not None:
             dismiss_permission_prompt(window_id)
@@ -482,8 +497,7 @@ def _ensure_output_view(window, state: DaemonState, agent_name: str):
 
 def _setup_async_loop_and_queue(state: DaemonState):
     """Create and configure an asyncio event loop and queue for daemon operations."""
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
+    loop = new_daemon_loop()
     state.set(loop=loop)
     async_queue = asyncio.Queue()
     state.set(queue=async_queue)
@@ -499,6 +513,7 @@ def _safe_shutdown_loop(loop):
         acp_log('daemon', f'error shutting down event loop: {exc}')
     finally:
         loop.close()
+        clear_thread_loop()
 
 
 def _maybe_reset_daemon_on_exit(window_id: int, cmd, agent_name, state,
@@ -644,8 +659,7 @@ def _worker_thread(
             _update_agent_session_id(cmd, result_session_id)
         acp_log('worker', f'one-shot complete: status={status}, sid={result_session_id}, session_error={session_error}', window_id)
 
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
+    loop = new_daemon_loop()
 
     from ..protocol.log import set_log_window
 
@@ -1148,14 +1162,14 @@ def switch_daemon_session(window_id: int, session_id: str,
                     _apply_switched_config(cmd, load_result, config_holder)
                     _refresh_daemon_status(state)
                     return True, None, ''.join(chunks)
-                except (ACPError, asyncio.TimeoutError, ConnectionError) as exc:
+                except _ACP_TRANSPORT as exc:
                     acp_log('switch_session', f'replay load failed ({exc!r}); falling back')
             try:
                 _, resume_result = await _resume_on_conn(conn, agent_caps, session_id, work_dir)
                 _apply_switched_config(cmd, resume_result, None)
                 _refresh_daemon_status(state)
                 return True, None, None
-            except (ACPError, asyncio.TimeoutError, ConnectionError) as exc:
+            except _ACP_TRANSPORT as exc:
                 acp_log('switch_session', f'in-place resume failed ({exc!r}); reconnecting')
             try:
                 ok, err = await _reconnect_and_resume(
