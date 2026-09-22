@@ -487,7 +487,7 @@ def _load_permissions(settings) -> dict:
 def _ensure_output_view(window, state: DaemonState, agent_name: str):
     """Ensure an output view exists for the daemon session."""
     view = state.get('output_view')
-    if view is not None and view.window() is not None:
+    if view is not None and view.is_valid() and view.window() is not None:
         return view
     new_view = ui.create_output_view(window, agent_name, role='daemon')
     ui.open_split_for_output(window, new_view)
@@ -1350,18 +1350,21 @@ def _daemon_thread_main(
 
                 prompt_text = item
                 # Read the live session fields each iteration so a switch or
-                # reconnect scheduled on this loop is picked up.
+                # reconnect scheduled on this loop is picked up, and refresh
+                # the output view so post-recreate turns (user closed the
+                # tab) target the new tab instead of the dead view.
                 conn = state.get('conn')
                 sid = state.get('session_id')
+                output_view = state.get('output_view')
                 state.set(is_busy=True, has_replied=False)
                 acp_log('daemon_session', f'processing prompt ({len(prompt_text)} chars)')
                 ui.on_main(
-                    lambda: broadcast.show_spinner(
-                        output_view,
+                    lambda ov=output_view: broadcast.show_spinner(
+                        ov,
                         lambda: not state.get('is_busy'),
                         f'{agent_name} processing',
-                        on_done=lambda ov=output_view, a=agent_name, c=cmd: broadcast.set_broadcast_status(
-                            STATUS_KEY_DAEMON, broadcast.daemon_status_text(a, c), ov.window()
+                        on_done=lambda ov2=ov, a=agent_name, c=cmd: broadcast.set_broadcast_status(
+                            STATUS_KEY_DAEMON, broadcast.daemon_status_text(a, c), ov2.window()
                         ),
                     ),
                 )

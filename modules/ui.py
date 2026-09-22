@@ -163,12 +163,15 @@ def make_stream_callback(
 ) -> Callable[[str], None]:
     """Create a streaming callback that appends text to *output_view*.
 
-    When *state* is provided (daemon mode), the callback also tracks
-    ``has_replied`` and focuses the view on the first reply. All view
-    mutations run on the main thread via ``sublime.set_timeout``.
+    When *state* is provided (daemon mode), the live view is resolved from
+    ``state`` on every chunk, so output follows a recreated tab after the
+    user closes the old one. The callback also tracks ``has_replied`` and
+    focuses the view on the first reply. All view mutations run on the
+    main thread via ``sublime.set_timeout``.
 
     Args:
-        output_view: The view to append streamed chunks to.
+        output_view: The view to append streamed chunks to (fallback when
+            *state* holds no live view, and the target for one-shot mode).
         state: Optional ``DaemonState`` for daemon-mode extras.
 
     Returns:
@@ -188,7 +191,13 @@ def make_stream_callback(
                         ov.window().focus_group(group)
                         ov.window().focus_view(ov)
                 on_main(_focus)
-        on_main(lambda t=text: _append_text(output_view, t))
+
+        def _append_live(t=text):
+            live = state.get('output_view') if state is not None else output_view
+            target = live if live is not None else output_view
+            if target is not None:
+                _append_text(target, t)
+        on_main(_append_live)
     return _on_chunk
 
 
