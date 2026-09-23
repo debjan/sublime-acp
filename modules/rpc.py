@@ -1041,6 +1041,14 @@ async def _handle_stream_request(
             await conn.respond_with_error(msg_id, -32601, 'Terminal not supported')
 
 
+def _format_agent_error(exc: ACPError) -> str:
+    """Format *exc* for output, including ``error.data.details`` when present."""
+    details = exc.data.get('details') if isinstance(exc.data, dict) else None
+    if not isinstance(details, str) or not details:
+        return str(exc)
+    return f'{exc}\n\n```\n{details}\n```'
+
+
 async def _send_prompt_request(
     conn: Connection,
     session_id: str,
@@ -1056,10 +1064,11 @@ async def _send_prompt_request(
         return result, None
     except ACPError as exc:
         acp_log('rpc', f'send_prompt_and_stream: ACPError: {exc}')
+        error_text = _format_agent_error(exc)
         if callback:
-            callback(f'**[Agent error]:** {exc}')
+            callback(f'**[Agent error]:** {error_text}')
         else:
-            sys.stdout.write(f'**[Agent error]:** {exc}\n')
+            sys.stdout.write(f'**[Agent error]:** {error_text}\n')
             sys.stdout.flush()
         if 'session not found' in exc.message.lower():
             return None, PROMPT_SESSION_NOT_FOUND
