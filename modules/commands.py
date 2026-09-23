@@ -137,7 +137,8 @@ def _display_title(session: dict) -> str:
 
 
 def _input_panel_kwargs(cmd, model, env, timeout, session_prompt,
-                        session_id=None, use_daemon=False, auth=None):
+                        session_id=None, use_daemon=False, auth=None,
+                        daemon_window_id=None):
     """Build the kwargs dict for the ``acp_input`` command."""
     return {
         'cmd': cmd,
@@ -148,7 +149,18 @@ def _input_panel_kwargs(cmd, model, env, timeout, session_prompt,
         'session_id': session_id,
         'use_daemon': use_daemon,
         'auth': auth,
+        'daemon_window_id': daemon_window_id,
     }
+
+
+def _window_by_id(window_id):
+    """Return the open window matching *window_id*, or ``None``."""
+    if not isinstance(window_id, int):
+        return None
+    for w in sublime.windows():
+        if w.id() == window_id:
+            return w
+    return None
 
 
 def _acp_input_kwargs(state, session_prompt=''):
@@ -162,6 +174,7 @@ def _acp_input_kwargs(state, session_prompt=''):
         session_id=state.get('session_id'),
         use_daemon=True,
         auth=state.get('auth'),
+        daemon_window_id=state.get('window_id'),
     )
 
 
@@ -290,7 +303,8 @@ class AcpInputCommand(sublime_plugin.WindowCommand):
 
     def run(self, cmd=None, model=None, env=None, timeout=None,
             session_prompt=None, initial_text='',
-            use_daemon=False, session_id=None, auth=None):
+            use_daemon=False, session_id=None, auth=None,
+            daemon_window_id=None):
         """Open a prompt input panel with ``@`` file and ``/`` slash-command autocomplete.
 
         Args:
@@ -303,9 +317,12 @@ class AcpInputCommand(sublime_plugin.WindowCommand):
             use_daemon: Whether to route the prompt to a running daemon.
             session_id: Session ID to continue.
             auth: Authentication flag override.
+            daemon_window_id: Owning daemon window id; the panel's prompt
+                routes there even if this command runs in another window.
         """
         exec_state = _input_panel_kwargs(
-            cmd, model, env, timeout, session_prompt, session_id, use_daemon, auth
+            cmd, model, env, timeout, session_prompt, session_id, use_daemon, auth,
+            daemon_window_id,
         )
 
         agents = _load_agents()
@@ -329,8 +346,8 @@ class AcpInputCommand(sublime_plugin.WindowCommand):
             input_view.settings().set('auto_complete', True)
             input_view.settings().set('auto_complete_selector', 'text')
             input_view.settings().set('acp_slash_commands', slash_commands or [])
-        # Record the input view on this window's daemon state (if any)
-        daemon_state = get_state(self.window.id())
+        owner_id = daemon_window_id if isinstance(daemon_window_id, int) else self.window.id()
+        daemon_state = get_state(owner_id)
         if daemon_state is not None:
             daemon_state.set(input_view=input_view)
         # Warm the file cache early so @ completions work on first try
@@ -343,14 +360,28 @@ class AcpInputCommand(sublime_plugin.WindowCommand):
             prompt: The prompt text submitted from the input panel.
             state: The ``exec_state`` dict captured by the submitting input panel.
         """
+        if state.get('use_daemon'):
+            owner_id = state.get('daemon_window_id')
+            if isinstance(owner_id, int):
+                owner = _window_by_id(owner_id)
+                if owner is None:
+                    sublime.status_message('ACP: Owning window closed - prompt not sent')
+                    return
+                target = owner
+            else:
+                target = self.window
+            source_view = (_find_view_with_selection(target)
+                           if settings().get('attach_selection', False)
+                           else None)
+            if source_view is None:
+                source_view = target.active_view()
+            _execute_prompt_daemon(prompt, source_view)
+            return
         source_view = (_find_view_with_selection(self.window)
                        if settings().get('attach_selection', False)
                        else None)
         if source_view is None:
             source_view = self.window.active_view()
-        if state.get('use_daemon'):
-            _execute_prompt_daemon(prompt, source_view)
-            return
         execute_prompt(
             window=self.window,
             source_view=source_view,
@@ -683,10 +714,15 @@ class _AcpSwitchConfigOptionCommand(sublime_plugin.WindowCommand):
 
         label = self.label
         agent_name = state.get('agent_name') or 'agent'
+        owner = self.window
+        try:
+            owner_id = owner.id()
+        except Exception:
+            owner_id = None
 
         async def _send() -> None:
             if state.get('is_busy'):
-                acp_log('switch_config', f'skip {config_id} change: daemon busy')
+                acp_log('switch_config', f'skip {config_id} change: daemon busy', owner_id)
                 return
             try:
                 response = await conn.send_request('session/set_config_option', {
@@ -714,14 +750,15 @@ class _AcpSwitchConfigOptionCommand(sublime_plugin.WindowCommand):
                 acp_log(
                     f'switch_{config_id}',
                     f'{label.lower()} changed to {confirmed!r} (session={session_id})',
+                    owner_id,
                 )
                 sublime.set_timeout(
-                    lambda v=confirmed: broadcast.set_broadcast_status(
-                        STATUS_KEY_NOTIFY, f'ACP: {label} -> {v}'
+                    lambda v=confirmed, w=owner: broadcast.set_broadcast_status(
+                        STATUS_KEY_NOTIFY, f'ACP: {label} -> {v}', w
                     ), 0
                 )
                 sublime.set_timeout(
-                    lambda: broadcast.erase_broadcast_status(STATUS_KEY_NOTIFY), 5000
+                    lambda w=owner: broadcast.erase_broadcast_status(STATUS_KEY_NOTIFY, w), 5000
                 )
                 sublime.set_timeout(
                     lambda: broadcast.set_broadcast_status(
@@ -741,14 +778,15 @@ class _AcpSwitchConfigOptionCommand(sublime_plugin.WindowCommand):
                 acp_log(
                     f'switch_{config_id}',
                     f'failed to set {config_id} {value!r}: {type(exc).__name__}: {exc}',
+                    owner_id,
                 )
                 sublime.set_timeout(
-                    lambda e=exc: broadcast.set_broadcast_status(
-                        STATUS_KEY_NOTIFY, f'ACP: Failed to set {label.lower()}: {e}'
+                    lambda e=exc, w=owner: broadcast.set_broadcast_status(
+                        STATUS_KEY_NOTIFY, f'ACP: Failed to set {label.lower()}: {e}', w
                     ), 0
                 )
                 sublime.set_timeout(
-                    lambda: broadcast.erase_broadcast_status(STATUS_KEY_NOTIFY), 5000
+                    lambda w=owner: broadcast.erase_broadcast_status(STATUS_KEY_NOTIFY, w), 5000
                 )
 
         asyncio.run_coroutine_threadsafe(_send(), loop)

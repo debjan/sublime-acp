@@ -252,20 +252,49 @@ def append_prompt_turn(view: sublime.View, prompt: str,
             append_to_output_view(view, f'{sel_display}\n{divider}')
 
 
-def reopen_daemon_input_panel(cmd, model, timeout, session_prompt, session_id, agent_name, daemon_window=None, env=None, auth=None):
-    """Re-open the prompt input panel so the user can continue chatting."""
-    window = daemon_window
-    if not window:
-        if daemon_window is not None:
-            return  # owning view/window gone - never fall back to another window
-        window = sublime.active_window()
+def _window_by_id(window_id):
+    """Return the open window matching *window_id*, or ``None``."""
+    if not isinstance(window_id, int):
+        return None
+    for w in sublime.windows():
+        if w.id() == window_id:
+            return w
+    return None
+
+
+def reopen_daemon_input_panel(cmd, model, timeout, session_prompt, session_id, agent_name, daemon_window=None, env=None, auth=None, daemon_window_id=None):
+    """Re-open the prompt input panel so the user can continue chatting.
+
+    The panel always opens in the daemon-owning window resolved from
+    *daemon_window_id* (preferred), *daemon_window* (a window or id), or
+    the active window only when no owner was given. Never falls back to
+    another window when the owner is known but closed.
+    """
+    owner_id = None
+    if isinstance(daemon_window_id, int):
+        owner_id = daemon_window_id
+    elif isinstance(daemon_window, int):
+        owner_id = daemon_window
+    elif daemon_window is None and daemon_window_id is None:
+        active = sublime.active_window()
+        if active is None:
+            return
         try:
-            if window.id() not in [w.id() for w in sublime.windows()]:
-                return  # owning window closed - never fall back to another window
+            owner_id = active.id()
+        except Exception:
+            return
+    elif daemon_window is not None and daemon_window is not False:
+        try:
+            owner_id = daemon_window.id()
         except Exception:
             return
     else:
-        window = sublime.active_window()
+        return  # owning view/window gone - never fall back to another window
+    if owner_id is None:
+        return
+    window = _window_by_id(owner_id)
+    if window is None:
+        return  # owning window closed - never fall back to another window
     if window is not None:
         window.run_command('acp_input', {
             'cmd': cmd,
@@ -276,6 +305,7 @@ def reopen_daemon_input_panel(cmd, model, timeout, session_prompt, session_id, a
             'session_id': session_id,
             'use_daemon': True,
             'auth': auth,
+            'daemon_window_id': owner_id,
         })
         broadcast.set_broadcast_status(
             STATUS_KEY_DAEMON, broadcast.daemon_status_text(agent_name, cmd), window

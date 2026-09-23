@@ -1434,12 +1434,14 @@ def _daemon_thread_main(
                 state.set(
                     is_busy=False, last_activity=time.monotonic(),
                 )
+                owner_id = state.get('window_id')
                 ui.on_main(
-                    lambda ov=output_view: ui.reopen_daemon_input_panel(
+                    lambda ov=output_view, wid=owner_id: ui.reopen_daemon_input_panel(
                         cmd, model, timeout, session_prompt, state.get('session_id'),
-                        agent_name, ov.window() if ov.window() is not None else False,
+                        agent_name, wid,
                         env=state.get('env') or {},
                         auth=state.get('auth'),
+                        daemon_window_id=wid if isinstance(wid, int) else None,
                     ),
                 )
 
