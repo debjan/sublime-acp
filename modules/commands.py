@@ -23,6 +23,7 @@ from .config import (
     STATUS_KEY_DAEMON,
     STATUS_KEY_NOTIFY,
     STATUS_KEY_USAGE,
+    resolve_session_prompt,
     settings,
 )
 from .daemon import (
@@ -135,7 +136,7 @@ def _display_title(session: dict) -> str:
     return session.get('sessionId', 'untitled') or 'untitled'
 
 
-def _input_panel_kwargs(cmd, model, env, timeout, system_prompt,
+def _input_panel_kwargs(cmd, model, env, timeout, session_prompt,
                         session_id=None, use_daemon=False, auth=None):
     """Build the kwargs dict for the ``acp_input`` command."""
     return {
@@ -143,21 +144,21 @@ def _input_panel_kwargs(cmd, model, env, timeout, system_prompt,
         'model': model,
         'env': env or {},
         'timeout': timeout or DEFAULT_TIMEOUT,
-        'system_prompt': system_prompt,
+        'session_prompt': session_prompt,
         'session_id': session_id,
         'use_daemon': use_daemon,
         'auth': auth,
     }
 
 
-def _acp_input_kwargs(state, system_prompt=''):
+def _acp_input_kwargs(state, session_prompt=''):
     """Build kwargs dict for the ``acp_input`` command targeting a running daemon."""
     return _input_panel_kwargs(
         cmd=state.get('agent_cmd') or [],
         model=settings().get('model'),
         env=state.get('env') or {},
         timeout=settings().get('timeout', DEFAULT_TIMEOUT),
-        system_prompt=settings().get('system_prompt') or system_prompt or '',
+        session_prompt=resolve_session_prompt(settings().get('session_prompt'), session_prompt),
         session_id=state.get('session_id'),
         use_daemon=True,
         auth=state.get('auth'),
@@ -225,19 +226,19 @@ class AcpCommand(sublime_plugin.WindowCommand):
         env = cmd_item.get('env', {})
         auth = cmd_item.get('auth', None)
         timeout = cmd_item.get('timeout', settings().get('timeout', DEFAULT_TIMEOUT))
-        system_prompt = settings().get('system_prompt') or ONE_SHOT_PROMPT
+        session_prompt = resolve_session_prompt(settings().get('session_prompt'), ONE_SHOT_PROMPT)
         agent_name = cmd_item.get('title', cmd[0])
 
         _dispatch_action(
             self.window, action,
             lambda p: self.execute(p, cmd, model, env, timeout, agent_name, auth,
-                                   system_prompt=system_prompt,
+                                   session_prompt=session_prompt,
                                    force_selection=True),
-            _input_panel_kwargs(cmd, model, env, timeout, system_prompt, auth=auth),
+            _input_panel_kwargs(cmd, model, env, timeout, session_prompt, auth=auth),
         )
 
     def execute(self, prompt, cmd, model, env, timeout, agent_name='', auth=None,
-                system_prompt=None, force_selection=False):
+                session_prompt=None, force_selection=False):
         """Execute a prompt against an agent, routing to daemon if one is running."""
         win = self.window
         state = get_state(win.id())
@@ -250,7 +251,7 @@ class AcpCommand(sublime_plugin.WindowCommand):
             window=win,
             source_view=source_view,
             prompt=prompt, cmd=cmd, model=model, env=env,
-            timeout=timeout, system_prompt=system_prompt or ONE_SHOT_PROMPT,
+            timeout=timeout, session_prompt=resolve_session_prompt(session_prompt, ONE_SHOT_PROMPT),
             agent_name=agent_name,
             settings=settings(),
             auth=auth,
@@ -288,7 +289,7 @@ class AcpInputCommand(sublime_plugin.WindowCommand):
     """Shows the prompt input panel with @ file autocomplete and runs the ACP command."""
 
     def run(self, cmd=None, model=None, env=None, timeout=None,
-            system_prompt=None, initial_text='',
+            session_prompt=None, initial_text='',
             use_daemon=False, session_id=None, auth=None):
         """Open a prompt input panel with ``@`` file and ``/`` slash-command autocomplete.
 
@@ -297,14 +298,14 @@ class AcpInputCommand(sublime_plugin.WindowCommand):
             model: Optional model override.
             env: Environment variables for the agent subprocess.
             timeout: Prompt timeout in seconds.
-            system_prompt: System prompt to prepend.
+            session_prompt: Prompt to prepend.
             initial_text: Pre-filled text in the input panel.
             use_daemon: Whether to route the prompt to a running daemon.
             session_id: Session ID to continue.
             auth: Authentication flag override.
         """
         exec_state = _input_panel_kwargs(
-            cmd, model, env, timeout, system_prompt, session_id, use_daemon, auth
+            cmd, model, env, timeout, session_prompt, session_id, use_daemon, auth
         )
 
         agents = _load_agents()
@@ -355,7 +356,7 @@ class AcpInputCommand(sublime_plugin.WindowCommand):
             source_view=source_view,
             prompt=prompt, cmd=state['cmd'], model=state['model'],
             env=state['env'], timeout=state['timeout'],
-            system_prompt=state.get('system_prompt', ''),
+            session_prompt=resolve_session_prompt(state.get('session_prompt'), ONE_SHOT_PROMPT),
             session_id=state.get('session_id'),
             agent_name=state['cmd'][0],
             settings=settings(),
@@ -409,7 +410,7 @@ class AcpStartCommand(sublime_plugin.WindowCommand):
         env = cmd_item.get('env', {})
         auth = cmd_item.get('auth', None)  # None means default behavior
         timeout = cmd_item.get('timeout', settings().get('timeout', DEFAULT_TIMEOUT))
-        system_prompt = settings().get('system_prompt') or SESSION_PROMPT
+        session_prompt = resolve_session_prompt(settings().get('session_prompt'), SESSION_PROMPT)
         agent_name = cmd_item.get('title', cmd[0])
         work_dir = ui.resolve_work_dir(self.window, self.window.active_view())
 
@@ -437,7 +438,7 @@ class AcpStartCommand(sublime_plugin.WindowCommand):
 
         thread = threading.Thread(
             target=_daemon_thread_main,
-            args=(window_id, cmd, agent_name, env, model, system_prompt,
+            args=(window_id, cmd, agent_name, env, model, session_prompt,
                   work_dir, timeout, output_view, settings(),
                   _load_permissions(settings()),
                   auth),
@@ -467,7 +468,7 @@ class AcpStartCommand(sublime_plugin.WindowCommand):
                 broadcast.set_broadcast_status(STATUS_KEY_DAEMON, broadcast.daemon_status_text(agent_name, state.get('agent_cmd')), daemon_window)
                 _start_idle_timer(window_id)
                 self.window.run_command(
-                    'acp_input', _acp_input_kwargs(state, system_prompt=SESSION_PROMPT)
+                    'acp_input', _acp_input_kwargs(state, session_prompt=SESSION_PROMPT)
                 )
 
         def is_init_done():

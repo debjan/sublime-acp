@@ -1122,7 +1122,7 @@ async def send_prompt_and_stream(
     conn: Connection,
     session_id: str,
     prompt: str,
-    system_prompt: str | None = None,
+    session_prompt: str | None = None,
     callback: Any | None = None,
     callback_timeout: float = 60.0,
     workspace_root: str | None = None,
@@ -1148,7 +1148,7 @@ async def send_prompt_and_stream(
         conn: Active ``Connection`` to the agent.
         session_id: Session ID to send the prompt to.
         prompt: User prompt text.
-        system_prompt: Optional system prompt prepended as a leading text
+        session_prompt: Optional session prompt prepended as a leading text
             content block.
         callback: Optional callable ``callback(text)`` invoked with each
             streamed chunk; when omitted, chunks are written to ``stdout``.
@@ -1202,8 +1202,8 @@ async def send_prompt_and_stream(
         )
 
     prompt_blocks: list[dict[str, str]] = []
-    if system_prompt:
-        prompt_blocks.append({'type': 'text', 'text': system_prompt})
+    if session_prompt:
+        prompt_blocks.append({'type': 'text', 'text': session_prompt})
     prompt_blocks.append({'type': 'text', 'text': prompt})
 
     async with conn.swap_callbacks(
@@ -1226,7 +1226,7 @@ async def acp(
     cmd: list[str],
     prompt: str,
     model: str | None = None,
-    system_prompt: str | None = None,
+    session_prompt: str | None = None,
     env: dict | None = None,
     callback: Any | None = None,
     callback_timeout: float = 60.0,
@@ -1247,7 +1247,7 @@ async def acp(
         cmd: Agent command list (executable path followed by arguments).
         prompt: User prompt text.
         model: Optional model name set via ``session/set_config_option``.
-        system_prompt: Optional system prompt prepended as a text content block.
+        session_prompt: Optional session prompt prepended as a text content block.
         env: Optional environment variables layered over the current process env.
         callback: Optional callable ``callback(text)`` for streamed response
             chunks; when omitted chunks go to ``stdout``.
@@ -1284,7 +1284,7 @@ async def acp(
         session_error = init_result.get('session_error')
 
         await send_prompt_and_stream(
-            conn, sid, prompt, system_prompt,
+            conn, sid, prompt, session_prompt,
             callback=callback, callback_timeout=callback_timeout,
             workspace_root=cwd,
             permissions_config=permissions_config,

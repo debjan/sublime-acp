@@ -252,7 +252,7 @@ def append_prompt_turn(view: sublime.View, prompt: str,
             append_to_output_view(view, f'{sel_display}\n{divider}')
 
 
-def reopen_daemon_input_panel(cmd, model, timeout, system_prompt, session_id, agent_name, daemon_window=None, env=None, auth=None):
+def reopen_daemon_input_panel(cmd, model, timeout, session_prompt, session_id, agent_name, daemon_window=None, env=None, auth=None):
     """Re-open the prompt input panel so the user can continue chatting."""
     window = daemon_window
     if not window:
@@ -272,7 +272,7 @@ def reopen_daemon_input_panel(cmd, model, timeout, system_prompt, session_id, ag
             'model': model,
             'env': env or {},
             'timeout': timeout,
-            'system_prompt': system_prompt,
+            'session_prompt': session_prompt,
             'session_id': session_id,
             'use_daemon': True,
             'auth': auth,

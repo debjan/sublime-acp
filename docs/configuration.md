@@ -32,7 +32,7 @@ With more than one entry, a quick panel lets you pick; a single entry is auto-se
 
 | Setting            | Default     | Purpose                                                                                                                          |
 | ------------------ | ----------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `system_prompt`    | `null`      | Custom system prompt passed to the agent                                                                                         |
+| `session_prompt`   |             | Custom session prompt prepended to agent session                                                                                 |
 | `attach_selection` | `false`     | Auto-attach current selection as context (`@path:line-line`)                                                                     |
 | `context_usage`    | `true`      | Show context token usage in the status bar (e.g. `ctx 27% (53k/200k)`)                                                           |
 | `git_turn_summary` | `"counts"`  | Turn-end git summary: `"diff"` (filenames + patches), `"counts"` (filenames + change counts), `false` (off). `true` = `"counts"` |

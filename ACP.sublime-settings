@@ -66,8 +66,6 @@
             "prompt": "Summarize with key points"
         },
     ],
-    "system_prompt": null,  // Custom system prompt for the agent (if any)
-
     // Automatically attach the current selection as context (@path:line-line or a code block)
     "attach_selection": false,
 
