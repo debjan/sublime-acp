@@ -76,9 +76,9 @@
                 "required": ["title", "prompt"]
               }
             },
-            "system_prompt": {
-              "type": ["string", "null"],
-              "description": "Custom system prompt prepended to every agent conversation."
+            "session_prompt": {
+              "type": ["string"],
+              "description": "Custom session prompt prepended to agent session."
             },
             "attach_selection": {
               "type": "boolean",

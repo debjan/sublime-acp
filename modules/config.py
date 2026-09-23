@@ -55,3 +55,10 @@ Rules:
 - Proactively suggest follow-up directions or next steps when appropriate - the session is interactive and iterative.
 - Generate session title from the first prompt if possible.{PROMPT}
 """
+
+
+def resolve_session_prompt(raw: object, default: str) -> str:
+    """Resolve the ``session_prompt`` setting against a built-in default."""
+    if isinstance(raw, str):
+        return raw
+    return default

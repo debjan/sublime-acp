@@ -1041,6 +1041,14 @@ async def _handle_stream_request(
             await conn.respond_with_error(msg_id, -32601, 'Terminal not supported')
 
 
+def _format_agent_error(exc: ACPError) -> str:
+    """Format *exc* for output, including ``error.data.details`` when present."""
+    details = exc.data.get('details') if isinstance(exc.data, dict) else None
+    if not isinstance(details, str) or not details:
+        return str(exc)
+    return f'{exc}\n\n```\n{details}\n```'
+
+
 async def _send_prompt_request(
     conn: Connection,
     session_id: str,
@@ -1056,10 +1064,11 @@ async def _send_prompt_request(
         return result, None
     except ACPError as exc:
         acp_log('rpc', f'send_prompt_and_stream: ACPError: {exc}')
+        error_text = _format_agent_error(exc)
         if callback:
-            callback(f'**[Agent error]:** {exc}')
+            callback(f'**[Agent error]:** {error_text}')
         else:
-            sys.stdout.write(f'**[Agent error]:** {exc}\n')
+            sys.stdout.write(f'**[Agent error]:** {error_text}\n')
             sys.stdout.flush()
         if 'session not found' in exc.message.lower():
             return None, PROMPT_SESSION_NOT_FOUND
@@ -1113,7 +1122,7 @@ async def send_prompt_and_stream(
     conn: Connection,
     session_id: str,
     prompt: str,
-    system_prompt: str | None = None,
+    session_prompt: str | None = None,
     callback: Any | None = None,
     callback_timeout: float = 60.0,
     workspace_root: str | None = None,
@@ -1139,7 +1148,7 @@ async def send_prompt_and_stream(
         conn: Active ``Connection`` to the agent.
         session_id: Session ID to send the prompt to.
         prompt: User prompt text.
-        system_prompt: Optional system prompt prepended as a leading text
+        session_prompt: Optional session prompt prepended as a leading text
             content block.
         callback: Optional callable ``callback(text)`` invoked with each
             streamed chunk; when omitted, chunks are written to ``stdout``.
@@ -1193,8 +1202,8 @@ async def send_prompt_and_stream(
         )
 
     prompt_blocks: list[dict[str, str]] = []
-    if system_prompt:
-        prompt_blocks.append({'type': 'text', 'text': system_prompt})
+    if session_prompt:
+        prompt_blocks.append({'type': 'text', 'text': session_prompt})
     prompt_blocks.append({'type': 'text', 'text': prompt})
 
     async with conn.swap_callbacks(
@@ -1217,7 +1226,7 @@ async def acp(
     cmd: list[str],
     prompt: str,
     model: str | None = None,
-    system_prompt: str | None = None,
+    session_prompt: str | None = None,
     env: dict | None = None,
     callback: Any | None = None,
     callback_timeout: float = 60.0,
@@ -1238,7 +1247,7 @@ async def acp(
         cmd: Agent command list (executable path followed by arguments).
         prompt: User prompt text.
         model: Optional model name set via ``session/set_config_option``.
-        system_prompt: Optional system prompt prepended as a text content block.
+        session_prompt: Optional session prompt prepended as a text content block.
         env: Optional environment variables layered over the current process env.
         callback: Optional callable ``callback(text)`` for streamed response
             chunks; when omitted chunks go to ``stdout``.
@@ -1275,7 +1284,7 @@ async def acp(
         session_error = init_result.get('session_error')
 
         await send_prompt_and_stream(
-            conn, sid, prompt, system_prompt,
+            conn, sid, prompt, session_prompt,
             callback=callback, callback_timeout=callback_timeout,
             workspace_root=cwd,
             permissions_config=permissions_config,

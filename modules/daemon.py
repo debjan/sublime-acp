@@ -537,7 +537,7 @@ def _run_acp_worker(
     cmd: list,
     prompt: str,
     model: str,
-    system_prompt: str,
+    session_prompt: str,
     work_dir: str,
     env: dict,
     timeout: int,
@@ -553,7 +553,7 @@ def _run_acp_worker(
         cmd: Agent command list.
         prompt: User prompt text.
         model: Model name to use.
-        system_prompt: System prompt for the agent.
+        session_prompt: Session prompt for the agent.
         work_dir: Working directory for the agent.
         env: Environment variables.
         timeout: Request timeout in seconds.
@@ -565,7 +565,7 @@ def _run_acp_worker(
     """
     on_chunk = ui.make_stream_callback(output_view)
     window_id = output_view.window().id() if output_view.window() is not None else None
-    args = (on_chunk, cmd, prompt, model, system_prompt, work_dir, env, timeout, session_id, settings, permissions_config, auth, window_id)
+    args = (on_chunk, cmd, prompt, model, session_prompt, work_dir, env, timeout, session_id, settings, permissions_config, auth, window_id)
     thread = threading.Thread(target=_worker_thread, args=args, daemon=True)
 
     acp_log('worker', f'one-shot worker started: cmd={cmd}, model={model}, session_id={session_id}', window_id)
@@ -594,7 +594,7 @@ def _worker_thread(
     cmd: list,
     prompt: str,
     model: str | None,
-    system_prompt: str | None,
+    session_prompt: str | None,
     work_dir: str,
     env: dict,
     timeout: float,
@@ -611,7 +611,7 @@ def _worker_thread(
         cmd: Agent command list.
         prompt: User prompt text.
         model: Optional model name.
-        system_prompt: Optional system prompt.
+        session_prompt: Optional session prompt.
         work_dir: Working directory for the agent.
         env: Environment variables.
         timeout: Request timeout in seconds.
@@ -628,7 +628,7 @@ def _worker_thread(
             cmd=cmd,
             prompt=prompt,
             model=model,
-            system_prompt=system_prompt,
+            session_prompt=session_prompt,
             env=current_env,
             callback=on_chunk,
             callback_timeout=timeout,
@@ -798,7 +798,7 @@ def execute_prompt(
     model: str,
     env: dict,
     timeout: int,
-    system_prompt: str,
+    session_prompt: str,
     session_id: str | None = None,
     agent_name: str = '',
     settings=None,
@@ -815,7 +815,7 @@ def execute_prompt(
         model: Model name to use.
         env: Environment variables.
         timeout: Request timeout in seconds.
-        system_prompt: System prompt for the agent.
+        session_prompt: Session prompt for the agent.
         session_id: Optional session ID to resume.
         agent_name: Name of the agent for the output view title.
         settings: Sublime settings dictionary.
@@ -832,7 +832,7 @@ def execute_prompt(
                                            force=force_selection)
 
     _run_acp_worker(
-        cmd, prompt, model, system_prompt, work_dir, env, timeout,
+        cmd, prompt, model, session_prompt, work_dir, env, timeout,
         session_id, output_view, settings, _load_permissions(settings),
         auth,
     )
@@ -1272,7 +1272,7 @@ def _daemon_thread_main(
     agent_name: str,
     env: dict,
     model: str | None,
-    system_prompt: str,
+    session_prompt: str,
     work_dir: str,
     timeout: float,
     output_view,
@@ -1291,7 +1291,7 @@ def _daemon_thread_main(
         agent_name: Name of the agent.
         env: Environment variables.
         model: Optional model name.
-        system_prompt: Optional system prompt.
+        session_prompt: Optional session prompt.
         work_dir: Working directory for the agent.
         timeout: Request timeout in seconds.
         output_view: Output view for streaming responses.
@@ -1387,7 +1387,7 @@ def _daemon_thread_main(
 
                 ok = await send_prompt_and_stream(
                     conn, sid, prompt_text,
-                    system_prompt if first_prompt else None,
+                    session_prompt if first_prompt else None,
                     callback=stream_callback, callback_timeout=timeout,
                     workspace_root=work_dir,
                     permissions_config=permissions_config,
@@ -1434,12 +1434,14 @@ def _daemon_thread_main(
                 state.set(
                     is_busy=False, last_activity=time.monotonic(),
                 )
+                owner_id = state.get('window_id')
                 ui.on_main(
-                    lambda ov=output_view: ui.reopen_daemon_input_panel(
-                        cmd, model, timeout, system_prompt, state.get('session_id'),
-                        agent_name, ov.window() if ov.window() is not None else False,
+                    lambda ov=output_view, wid=owner_id: ui.reopen_daemon_input_panel(
+                        cmd, model, timeout, session_prompt, state.get('session_id'),
+                        agent_name, wid,
                         env=state.get('env') or {},
                         auth=state.get('auth'),
+                        daemon_window_id=wid if isinstance(wid, int) else None,
                     ),
                 )
 
