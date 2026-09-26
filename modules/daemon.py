@@ -88,6 +88,7 @@ class DaemonState:
         self.agent_name: str | None = None
         self.window_id: int | None = None
         self.session_id: str | None = None
+        self.sessions_cache: list | None = None
         self.thread: threading.Thread | None = None
         self.proc = None
         self.conn = None
@@ -158,6 +159,7 @@ class DaemonState:
             self.agent_name = None
             self.window_id = None
             self.session_id = None
+            self.sessions_cache = None
             self.thread = None
             self.proc = None
             self.conn = None
@@ -1033,6 +1035,22 @@ def list_daemon_sessions(window_id: int, on_done: Callable) -> None:
     future.add_done_callback(_done)
 
 
+def refresh_session_cache(window_id: int) -> None:
+    """Background refresh of the cached ``session/list`` result."""
+    state = get_state(window_id)
+    if state is None or not state.is_running() or not state.supports('list'):
+        return
+
+    def _on_done(sessions, supported):
+        if sessions is None:
+            return
+        st = get_state(window_id)
+        if st is not None and st.is_running():
+            st.set(sessions_cache=sessions)
+
+    list_daemon_sessions(window_id, _on_done)
+
+
 def _require_idle_daemon(window_id: int, busy_msg: str, on_done: Callable | None):
     """Return idle daemon context or ``None`` after reporting the blocker."""
     state = get_state(window_id)
@@ -1078,6 +1096,7 @@ def _finish_session_change(state, cmd, sid, ok, error, success_view, success_sta
             usage_used=None, usage_size=None,
             has_replied=False, last_activity=time.monotonic(),
         )
+        refresh_session_cache(state.get('window_id'))
         output_view = state.get('output_view')
         if output_view is not None:
             if replay_text:

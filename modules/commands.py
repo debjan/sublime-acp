@@ -38,6 +38,7 @@ from .daemon import (
     is_unloading,
     list_daemon_sessions,
     new_daemon_session,
+    refresh_session_cache,
     set_state,
     switch_daemon_session,
 )
@@ -124,7 +125,6 @@ def _display_title(session: dict) -> str:
     from .config import SESSION_PROMPT
 
     if title := (session.get('title') or '').strip():
-        return session.get('sessionId', 'untitled')
         normalized_title = ' '.join(title.split())
         prompt_head = ' '.join(SESSION_PROMPT.split())
         is_echo = (
@@ -498,6 +498,7 @@ class AcpStartCommand(sublime_plugin.WindowCommand):
                 acp_log('daemon_session', f'init completed for "{agent_name}"', window_id)
                 broadcast.set_broadcast_status(STATUS_KEY_DAEMON, broadcast.daemon_status_text(agent_name, state.get('agent_cmd')), daemon_window)
                 _start_idle_timer(window_id)
+                refresh_session_cache(window_id)
                 self.window.run_command(
                     'acp_input', _acp_input_kwargs(state, session_prompt=SESSION_PROMPT)
                 )
@@ -514,6 +515,55 @@ class AcpStartCommand(sublime_plugin.WindowCommand):
         )
 
 
+class _AcpSessionInputHandler(sublime_plugin.ListInputHandler):
+    """Session list with a leading new-session action row."""
+
+    def __init__(self, sessions: list, current: str | None) -> None:
+        self._sessions = sessions
+        self._current = current
+
+    def name(self) -> str:
+        return 'Session'
+
+    def placeholder(self) -> str:
+        return ''
+
+    def list_items(self) -> tuple:
+        """Return ``(items, selected_index)`` with a gutter check on current."""
+        ambiguous_id = getattr(sublime, 'KIND_ID_AMBIGUOUS', 0)
+        green_id = getattr(sublime, 'KIND_ID_COLOR_GREENISH', ambiguous_id)
+        navigation_id = getattr(sublime, 'KIND_ID_NAVIGATION', ambiguous_id)
+        list_item_cls = getattr(sublime, 'ListInputItem', None)
+        items = []
+        new_kind = (navigation_id, '+', '')
+        if list_item_cls is not None:
+            items.append(list_item_cls(
+                '+ Start new session', '',
+                details='Start fresh without restarting the agent', kind=new_kind,
+            ))
+        else:  # pragma: no cover - older Sublime without ListInputItem
+            items.append(sublime.QuickPanelItem(
+                '+ Start new session',
+                details='Start fresh without restarting the agent', kind=new_kind,
+            ))
+        selected_index = 0
+        for i, s in enumerate(self._sessions, start=1):
+            title = _display_title(s)
+            sid = s.get('sessionId', '')
+            updated = _format_local_time(s.get('updatedAt'))
+            detail = sid if len(sid) <= 32 else f'…{sid[-16:]}'
+            if updated:
+                detail = f'{updated} · {detail}'
+            if is_current := bool(sid) and sid == self._current:
+                selected_index = i
+            kind = (green_id, '✓', '') if is_current else (ambiguous_id, '', '')
+            if list_item_cls is not None:
+                items.append(list_item_cls(title, sid, details=detail, kind=kind))
+            else:
+                items.append(sublime.QuickPanelItem(title, details=detail, kind=kind))
+        return (items, selected_index)
+
+
 class AcpSwitchSessionCommand(sublime_plugin.WindowCommand):
     """List recent sessions and switch the running daemon to the selected one."""
 
@@ -525,8 +575,30 @@ class AcpSwitchSessionCommand(sublime_plugin.WindowCommand):
             and not state.get('is_busy')
         )
 
-    def run(self):
-        """List the active agent's recent sessions and switch on selection."""
+    def input(self, args: dict) -> Any | None:
+        """Return session list from the warmed session cache."""
+        if 'Session' in args or 'session_id' in args:
+            return None
+        state = get_state(self.window.id())
+        if state is None or not state.is_running() or not state.supports('list'):
+            return None
+        sessions = state.get('sessions_cache')
+        if sessions is None:
+            return None
+        return _AcpSessionInputHandler(
+            sessions, state.get('session_id'),
+        )
+
+    def run(self, session_id: str | None = None, **kwargs: Any):
+        """Apply the picked session, or fetch live when the cache is cold."""
+        if session_id is None:
+            session_id = kwargs.get('Session')
+        if session_id is not None:
+            if session_id == '':
+                new_daemon_session(self.window.id(), on_done=self._on_switched)
+            else:
+                switch_daemon_session(self.window.id(), session_id, on_done=self._on_switched)
+            return
         if is_unloading():
             sublime.status_message('ACP is reloading, please retry in a moment')
             return
@@ -547,25 +619,35 @@ class AcpSwitchSessionCommand(sublime_plugin.WindowCommand):
             else:
                 sublime.status_message('ACP: agent does not support session/list')
             return
-        if not sessions:
-            sublime.status_message('ACP: no previous sessions found')
-            return
+        window_id = self.window.id()
+        state = get_state(window_id)
+        if state is not None and state.is_running():
+            state.set(sessions_cache=sessions)
+        current = state.get('session_id') if state is not None else None
+        ambiguous_id = getattr(sublime, 'KIND_ID_AMBIGUOUS', 0)
+        green_id = getattr(sublime, 'KIND_ID_COLOR_GREENISH', ambiguous_id)
+        navigation_id = getattr(sublime, 'KIND_ID_NAVIGATION', ambiguous_id)
+        items = [
+            sublime.QuickPanelItem(
+                '+ Start new session',
+                details='Start fresh without restarting the agent',
+                kind=(navigation_id, '+', ''),
+            )
+        ]
+        selected_index = 0
+        for i, s in enumerate(sessions, start=1):
+            title = _display_title(s)
+            sid = s.get('sessionId', '')
+            updated = _format_local_time(s.get('updatedAt'))
+            detail = sid if len(sid) <= 32 else f'…{sid[-16:]}'
+            if updated:
+                detail = f'{updated} · {detail}'
+            if is_current := bool(sid) and sid == current:
+                selected_index = i
+            kind = (green_id, '✓', '') if is_current else (ambiguous_id, '', '')
+            items.append(sublime.QuickPanelItem(title, details=detail, kind=kind))
         self._sessions = sessions
-        items = [['+ Start new session', 'Start fresh without restarting the agent']]
-        items.extend(self._label(s) for s in sessions)
-        self.window.show_quick_panel(items, self._on_pick, placeholder='Select session to switch to')
-
-    @staticmethod
-    def _label(s):
-        title = _display_title(s)
-        updated = _format_local_time(s.get('updatedAt'))
-        sid = s.get('sessionId', '')
-        # Show the full ID when it is human-readable (e.g. "married-gooseberry");
-        # only shorten long opaque IDs to keep the row readable.
-        detail = sid if len(sid) <= 32 else f'…{sid[-16:]}'
-        if updated:
-            detail = f'{updated} · {detail}'
-        return [title, detail]
+        self.window.show_quick_panel(items, self._on_pick, selected_index=selected_index)
 
     def _on_pick(self, index):
         if index == -1:
@@ -649,51 +731,34 @@ class _AcpSwitchConfigOptionCommand(sublime_plugin.WindowCommand):
             and self._config_option() is not None
         )
 
-    def run(self) -> None:
-        """Show a quick panel of available options and apply the selection."""
-        state = get_state(self.window.id())
-        if state is None or not state.is_running():
-            sublime.status_message('ACP: No agent session running')
-            return
-        if state.get('is_busy'):
-            sublime.status_message(
-                'ACP: Wait for the current prompt to finish before switching'
-            )
-            return
+    def input(self, args: dict) -> Any | None:
+        """Return option list when ``value`` was not supplied."""
+        if 'value' in args:
+            return None
+        if not self.is_enabled():
+            return None
         opt = self._config_option()
         if opt is None:
-            sublime.status_message(
-                f'ACP: Active agent does not support {self.label.lower()} switching'
-            )
-            return
-        config_id = opt.get('id') or self.config_id
-        options = opt.get('options') or []
-        current = opt.get('currentValue')
-
-        items = []
-        selected_index = 0
-        for i, o in enumerate(options):
-            name = o.get('name') or o.get('value', '')
-            value_str = o.get('value', '')
-            if o.get('value') == current:
-                name = f'✓ {name}'
-                selected_index = i
-            items.append([name, value_str])
-
-        def on_select(index: int) -> None:
-            if index == -1:
-                return
-            self._apply_option(config_id, options[index].get('value', ''))
-            st = get_state(self.window.id())
-            if st is not None:
-                input_view = st.get('input_view')
-                if input_view is not None and input_view.window() is not None:
-                    self.window.focus_view(input_view)
-
-        self.window.show_quick_panel(
-            items, on_select, selected_index=selected_index,
-            placeholder=f'Select {self.label.lower()}'
+            return None
+        return _AcpConfigOptionInputHandler(
+            opt.get('options') or [],
+            opt.get('currentValue'), self.label,
         )
+
+    def run(self, value: str | None = None, **kwargs: Any) -> None:
+        """Apply the option chosen via the input handler."""
+        if value is None:
+            value = kwargs.get(self.label)
+        if value is None:
+            return
+        opt = self._config_option()
+        config_id = (opt or {}).get('id') or self.config_id
+        self._apply_option(config_id, value)
+        st = get_state(self.window.id())
+        if st is not None:
+            input_view = st.get('input_view')
+            if input_view is not None and input_view.window() is not None:
+                self.window.focus_view(input_view)
 
     def _apply_option(self, config_id: str, value: str) -> None:
         """Send ``session/set_config_option`` for :attr:`config_id` and update the cache."""
@@ -790,6 +855,40 @@ class _AcpSwitchConfigOptionCommand(sublime_plugin.WindowCommand):
                 )
 
         asyncio.run_coroutine_threadsafe(_send(), loop)
+
+
+class _AcpConfigOptionInputHandler(sublime_plugin.ListInputHandler):
+    """Option list for Switch Model/Mode/Thought Level."""
+
+    def __init__(self, options: list, current: Any, label: str) -> None:
+        self._options = options
+        self._current = current
+        self._label = label
+
+    def name(self) -> str:
+        return self._label
+
+    def placeholder(self) -> str:
+        return ''
+
+    def list_items(self) -> tuple:
+        """Return ``(items, selected_index)`` with a gutter check on current."""
+        ambiguous_id = getattr(sublime, 'KIND_ID_AMBIGUOUS', 0)
+        green_id = getattr(sublime, 'KIND_ID_COLOR_GREENISH', ambiguous_id)
+        list_item_cls = getattr(sublime, 'ListInputItem', None)
+        items = []
+        selected_index = 0
+        for i, o in enumerate(self._options):
+            name = o.get('name') or o.get('value', '')
+            value_str = o.get('value', '')
+            if is_current := o.get('value') == self._current:
+                selected_index = i
+            kind = (green_id, '✓', '') if is_current else (ambiguous_id, '', '')
+            if list_item_cls is not None:
+                items.append(list_item_cls(name, value_str, details=value_str, kind=kind))
+            else:
+                items.append(sublime.QuickPanelItem(name, details=value_str, kind=kind))
+        return (items, selected_index)
 
 
 class AcpSwitchModelCommand(_AcpSwitchConfigOptionCommand):
