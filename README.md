@@ -75,8 +75,8 @@ For available options see [configuration.md](docs/configuration.md).
 | ACP: Stop Session             | `Ctrl+Alt+Shift+A` | Terminate the running daemon                      |
 | ACP: Send Prompt              | `Alt+Shift+A`      | One-shot prompt (or send to daemon)               |
 | ACP: Interrupt Current Prompt | `Ctrl+Break`       | Cancel the in-flight prompt (daemon only)         |
-| ACP: Switch Session           | -                  | Switch the running daemon to a recent session     |
 | ACP: Rename Session           | -                  | Set a local title for the current session         |
+| ACP: Switch Session           | -                  | Switch the running daemon to a recent session     |
 | ACP: Switch Model             | -                  | Change model mid-session (daemon only)            |
 | ACP: Switch Mode              | -                  | Change session mode mid-session (daemon only)     |
 | ACP: Switch Thought Level     | -                  | Change reasoning effort mid-session (daemon only) |
