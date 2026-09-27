@@ -36,6 +36,7 @@ The daemon auto-terminates after 15 minutes of inactivity (configurable).
 ### Switch sessions mid-session
 
 - `Ctrl+Shift+P` -> **"ACP: Switch Session"** - while a daemon is running, pick from the agent's recent sessions (via `session/list` on the live connection, filtered by the current working directory, capped by `session_list_limit`) and switch the daemon to it.
+- `Ctrl+Shift+P` -> **"ACP: Rename Session"** - set a title for the current session. Title is stored client-side and shown in **"ACP: Switch Session"**. Leave the field empty to clear it.
 
 ### Walkthrough
 
@@ -75,6 +76,7 @@ For available options see [configuration.md](docs/configuration.md).
 | ACP: Send Prompt              | `Alt+Shift+A`      | One-shot prompt (or send to daemon)               |
 | ACP: Interrupt Current Prompt | `Ctrl+Break`       | Cancel the in-flight prompt (daemon only)         |
 | ACP: Switch Session           | -                  | Switch the running daemon to a recent session     |
+| ACP: Rename Session           | -                  | Set a local title for the current session         |
 | ACP: Switch Model             | -                  | Change model mid-session (daemon only)            |
 | ACP: Switch Mode              | -                  | Change session mode mid-session (daemon only)     |
 | ACP: Switch Thought Level     | -                  | Change reasoning effort mid-session (daemon only) |

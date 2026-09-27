@@ -34,11 +34,13 @@ from .daemon import (
     _start_idle_timer,
     _stop_daemon_async,
     execute_prompt,
+    get_daemon_session_title,
     get_state,
     is_unloading,
     list_daemon_sessions,
     new_daemon_session,
     refresh_session_cache,
+    rename_daemon_session,
     set_state,
     switch_daemon_session,
 )
@@ -120,10 +122,38 @@ def _format_local_time(value: Any) -> str | None:
     return str(value)
 
 
+def _apply_title_overrides(cmd: list | None, sessions: list) -> None:
+    """Annotate *sessions* in place with their local title overrides."""
+    if not cmd or not sessions:
+        return
+    try:
+        agents = _load_agents()
+    except Exception as exc:
+        acp_log('switch_session', f'failed to load title overrides: {exc!r}')
+        return
+    titles = agents.get(cmd[0], {}).get('session_titles') or {}
+    if not titles:
+        return
+    for s in sessions:
+        if not isinstance(s, dict):
+            continue
+        override = titles.get(s.get('sessionId'))
+        if isinstance(override, str) and override.strip():
+            s['title_override'] = override
+
+
 def _display_title(session: dict) -> str:
-    """Return a session title, falling back to the full session ID."""
+    """Return a session title, falling back to the full session ID.
+
+    A local override set via ``ACP: Rename Session`` is explicit user intent,
+    so it wins. Otherwise the agent's ``title`` is used, unless it is a
+    verbatim echo of :data:`~modules.config.SESSION_PROMPT`. The session ID is
+    the final fallback.
+    """
     from .config import SESSION_PROMPT
 
+    if override := (session.get('title_override') or '').strip():
+        return override
     if title := (session.get('title') or '').strip():
         normalized_title = ' '.join(title.split())
         prompt_head = ' '.join(SESSION_PROMPT.split())
@@ -585,6 +615,7 @@ class AcpSwitchSessionCommand(sublime_plugin.WindowCommand):
         sessions = state.get('sessions_cache')
         if sessions is None:
             return None
+        _apply_title_overrides(state.get('agent_cmd'), sessions)
         return _AcpSessionInputHandler(
             sessions, state.get('session_id'),
         )
@@ -622,6 +653,7 @@ class AcpSwitchSessionCommand(sublime_plugin.WindowCommand):
         window_id = self.window.id()
         state = get_state(window_id)
         if state is not None and state.is_running():
+            _apply_title_overrides(state.get('agent_cmd'), sessions)
             state.set(sessions_cache=sessions)
         current = state.get('session_id') if state is not None else None
         ambiguous_id = getattr(sublime, 'KIND_ID_AMBIGUOUS', 0)
@@ -672,6 +704,61 @@ class AcpSwitchSessionCommand(sublime_plugin.WindowCommand):
             self.window.focus_view(input_view)
         else:
             self.window.run_command('acp_input', _acp_input_kwargs(state))
+
+
+class _AcpSessionTitleInputHandler(sublime_plugin.TextInputHandler):
+    """Free-text input for a local session title override."""
+
+    def __init__(self, current: str) -> None:
+        self._current = current
+
+    def name(self) -> str:
+        return 'title'
+
+    def placeholder(self) -> str:
+        return 'Session title (empty clears the override)'
+
+    def initial_text(self) -> str:
+        return self._current
+
+    def validate(self, arg: str) -> bool:
+        """Accept any single-line title."""
+        return '\n' not in arg and '\r' not in arg
+
+
+class AcpRenameSessionCommand(sublime_plugin.WindowCommand):
+    """Set a local title override for the current session.
+
+    ACP defines no client-to-agent session rename method, so the title is
+    recorded client-side only. The agent keeps its own title and, if it later
+    reports one via ``session_info_update``, that agent title wins and the
+    override is dropped.
+    """
+
+    def is_enabled(self) -> bool:
+        """Enable only while the daemon is running, idle, and has a session."""
+        state = get_state(self.window.id())
+        return (
+            state is not None and state.is_running()
+            and not state.get('is_busy')
+            and bool(state.get('session_id'))
+        )
+
+    def input(self, args: dict) -> Any | None:
+        """Ask for the new title when one was not supplied."""
+        if 'title' in args:
+            return None
+        if not self.is_enabled():
+            return None
+        return _AcpSessionTitleInputHandler(get_daemon_session_title(self.window.id()))
+
+    def run(self, title: str | None = None, **kwargs: Any) -> None:
+        """Store the title chosen via the input handler."""
+        if title is None:
+            title = kwargs.get('title')
+        if title is None:
+            return
+        rename_daemon_session(self.window.id(), title)
 
 
 class AcpStopCommand(sublime_plugin.WindowCommand):

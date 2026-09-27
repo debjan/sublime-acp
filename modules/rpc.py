@@ -144,6 +144,32 @@ def _extract_available_commands(method: str, params: dict) -> tuple[bool, Any]:
     return True, update.get('availableCommands')
 
 
+def _extract_session_info_update(method: str, params: dict) -> tuple[bool, str | None, str | None]:
+    """Return ``(matched, sessionId, title)`` for a ``session_info_update``.
+
+    All fields are optional on the wire, so *title* is ``None`` both when the
+    agent cleared it and when the notification omitted it. A cleared title is
+    reported as an empty string so callers can distinguish intent from absence.
+    """
+    default = (False, None, None)
+    if method != 'session/update' or not isinstance(params, dict):
+        return default
+    update = params.get('update', {})
+    if not isinstance(update, dict):
+        return default
+    if update.get('sessionUpdate') != 'session_info_update':
+        return default
+    session_id = params.get('sessionId')
+    if not isinstance(session_id, str) or not session_id:
+        return default
+    title = update.get('title')
+    if title is None:
+        return True, session_id, ''
+    if not isinstance(title, str):
+        return default
+    return True, session_id, title
+
+
 def _extract_usage_update(method: str, params: dict) -> tuple[bool, int | None, int | None]:
     """Return ``(matched, used, size)`` for a ``usage_update`` notification.
 
@@ -151,20 +177,21 @@ def _extract_usage_update(method: str, params: dict) -> tuple[bool, int | None, 
     ``usage_update`` with non-negative ``used`` and positive ``size``
     token counts. The optional ``cost`` field is ignored.
     """
+    default = (False, None, None)
     if method != 'session/update' or not isinstance(params, dict):
-        return False, None, None
+        return default
     update = params.get('update', {})
     if not isinstance(update, dict):
-        return False, None, None
+        return default
     if update.get('sessionUpdate') != 'usage_update':
-        return False, None, None
+        return default
     used = update.get('used')
     size = update.get('size')
     if (
         not isinstance(used, int) or isinstance(used, bool) or used < 0
         or not isinstance(size, int) or isinstance(size, bool) or size <= 0
     ):
-        return False, None, None
+        return default
     return True, used, size
 
 
@@ -994,8 +1021,15 @@ def _dispatch_stream_notification(
     on_commands: Any | None,
     on_usage: Any | None,
     show_tool_calls: bool = True,
+    on_session_info: Any | None = None,
 ) -> None:
     if method != 'session/update':
+        return
+    info_matched, info_sid, info_title = _extract_session_info_update(method, params)
+    if info_matched:
+        acp_log('rpc', f'send_prompt_and_stream: session_info_update (sid={info_sid})')
+        if on_session_info:
+            on_session_info(info_sid, info_title)
         return
     matched, commands = _extract_available_commands(method, params)
     if matched:
@@ -1133,6 +1167,7 @@ async def send_prompt_and_stream(
     on_commands: Any | None = None,
     on_usage: Any | None = None,
     show_tool_calls: bool = True,
+    on_session_info: Any | None = None,
 ) -> str:
     """Send a ``session/prompt`` and stream the response.
 
@@ -1172,6 +1207,9 @@ async def send_prompt_and_stream(
         on_usage: Optional callable ``on_usage(used, size)`` invoked with
             token counts from any ``usage_update`` notification seen while
             streaming.
+        on_session_info: Optional callable ``on_session_info(session_id, title)``
+            invoked when the agent sends a ``session_info_update``. An empty
+            *title* means the agent cleared the title.
         show_tool_calls: When ``True`` (default), render each tool call that
             reaches a terminal status as a single-line markdown bullet in the
             stream. When ``False``, tool calls are not rendered.
@@ -1192,7 +1230,7 @@ async def send_prompt_and_stream(
     def on_notification(method: str, params: dict) -> None:
         _dispatch_stream_notification(
             state, method, params, thoughts_mode, callback, on_commands, on_usage,
-            show_tool_calls=show_tool_calls,
+            show_tool_calls=show_tool_calls, on_session_info=on_session_info,
         )
 
     async def on_request(msg_id: int, method: str, params: dict) -> None:

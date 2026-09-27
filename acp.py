@@ -10,6 +10,7 @@ from .modules.commands import (
     AcpCommand,
     AcpInputCommand,
     AcpInterruptCommand,
+    AcpRenameSessionCommand,
     AcpStartCommand,
     AcpStopCommand,
     AcpSwitchModeCommand,

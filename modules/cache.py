@@ -127,6 +127,54 @@ def update_session_id(cache_dir: Path, cmd: list, session_id: str) -> None:
         save_agents(cache_dir, agents)
 
 
+def _get_agent_entry(agents: dict, cmd: list | None) -> tuple[dict, str | None]:
+    if not cmd:
+        return {}, None
+    agent_key = cmd[0]
+    return agents.get(agent_key) or {}, agent_key
+
+
+def set_session_title(cache_dir: Path, cmd: list, session_id: str, title: str | None) -> None:
+    """Persist a local title override for *session_id* for the given agent.
+
+    A ``None`` or blank *title* clears any existing override, so callers can
+    pass user input straight through without pre-normalizing it.
+    """
+    label = ' '.join(title.split()) if isinstance(title, str) else ''
+    with cache_lock:
+        agents = load_agents(cache_dir)
+        entry, agent_key = _get_agent_entry(agents, cmd)
+        if agent_key is None:
+            return
+        titles = entry.get('session_titles') or {}
+        if not label:
+            if session_id not in titles:
+                return
+            titles.pop(session_id, None)
+        else:
+            titles[session_id] = label
+        if titles:
+            entry['session_titles'] = titles
+        else:
+            entry.pop('session_titles', None)
+        agents[agent_key] = entry
+        save_agents(cache_dir, agents)
+
+
+def get_session_title_override(cache_dir: Path, cmd: list | None, session_id: str | None) -> str | None:
+    """Return a local title override for *session_id*, if any."""
+    if not cmd or not session_id:
+        return None
+    with cache_lock:
+        agents = load_agents(cache_dir)
+        entry, _ = _get_agent_entry(agents, cmd)
+        titles = entry.get('session_titles') or {}
+        t = titles.get(session_id)
+        if isinstance(t, str) and t.strip():
+            return t
+        return None
+
+
 def get_model_name(cache_dir: Path, cmd: list | None) -> str | None:
     """Return the agent's configured model from the cache, or ``None``."""
     if not cmd:

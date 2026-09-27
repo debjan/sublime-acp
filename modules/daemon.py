@@ -60,6 +60,7 @@ from .rpc import (
     PROMPT_OK,
     PROMPT_SESSION_NOT_FOUND,
     _extract_available_commands,
+    _extract_session_info_update,
     _extract_usage_update,
     _replay_text,
     acp,
@@ -127,6 +128,29 @@ class DaemonState:
         with self._lock:
             d = {k: getattr(self, k, None) for k in keys}
             return d[keys[0]] if len(keys) == 1 else d
+
+    def patch_session(self, session_id: str, field: str, value: str) -> bool:
+        """Set or clear *field* on the cached ``session/list`` entry for *session_id*.
+
+        *field* is either ``'title'`` (the agent's own title) or
+        ``'title_override'`` (the local rename), which stay separate so
+        clearing one never discards the other. A blank *value* removes the key.
+        Returns whether an entry was patched; a no-op when the cache is cold or
+        the session is not in the current page, since a later ``session/list``
+        fetch is authoritative anyway.
+        """
+        with self._lock:
+            sessions = self.sessions_cache
+            if not sessions:
+                return False
+            for s in sessions:
+                if isinstance(s, dict) and s.get('sessionId') == session_id:
+                    if value:
+                        s[field] = value
+                    else:
+                        s.pop(field, None)
+                    return True
+            return False
 
     def supports(self, method: str) -> bool:
         """Return whether the active agent advertises support for *method*.
@@ -359,19 +383,25 @@ def _make_usage_updater(state: DaemonState):
     return _update
 
 
-def _install_notification_handler(conn, cmd, on_usage=None):
+def _install_notification_handler(conn, cmd, on_usage=None, on_session_info=None):
     """Keep a persistent notification handler on the daemon connection.
 
     Persists ``available_commands_update`` payloads to the agent cache as they
     arrive, so commands are captured even when the agent announces them after
     the init phase has returned. Forwards ``usage_update`` payloads to
-    *on_usage*; other notifications are ignored here; prompt streaming
-    installs its own callbacks via ``swap_callbacks``, which restores this
-    handler afterwards.
+    *on_usage* and ``session_info_update`` payloads to *on_session_info*;
+    other notifications are ignored here; prompt streaming installs its own
+    callbacks via ``swap_callbacks``, which restores this handler afterwards.
     """
     update_commands = _make_commands_updater(cmd)
 
     def on_notification(method: str, params: dict) -> None:
+        info_matched, info_sid, info_title = _extract_session_info_update(method, params)
+        if info_matched:
+            acp_log('daemon', f'session_info_update (sid={info_sid})')
+            if on_session_info:
+                on_session_info(info_sid, info_title)
+            return
         matched, commands = _extract_available_commands(method, params)
         if matched:
             acp_log('daemon', f'available_commands_update ({len(commands or [])} commands)')
@@ -463,7 +493,8 @@ def _cache_daemon_agent_info(cmd, init_result):
         acp_log('daemon', f'error caching agent info: {e}')
 
 
-def _finalize_daemon_connection(conn, cmd, init_result, on_usage=None, strict=False):
+def _finalize_daemon_connection(conn, cmd, init_result, on_usage=None, strict=False,
+                                on_session_info=None):
     """Wire up a freshly initialized daemon connection.
 
     Caches agent info, installs the persistent notification handler,
@@ -471,7 +502,7 @@ def _finalize_daemon_connection(conn, cmd, init_result, on_usage=None, strict=Fa
     ``(session_id, agent_caps)``.
     """
     _cache_daemon_agent_info(cmd, init_result)
-    _install_notification_handler(conn, cmd, on_usage)
+    _install_notification_handler(conn, cmd, on_usage, on_session_info)
     session_id = init_result['session_id'] if strict else init_result.get('session_id')
     agent_caps = (init_result.get('initialize_result') or {}).get('agentCapabilities') or {}
     return session_id, agent_caps
@@ -973,7 +1004,9 @@ async def _reconnect_and_resume(state: DaemonState, cmd: list, env: dict,
         await cleanup_process(old_proc, old_conn.writer if old_conn is not None else None)
 
     new_sid, agent_caps = _finalize_daemon_connection(
-        conn, cmd, init_result, _make_usage_updater(state))
+        conn, cmd, init_result, _make_usage_updater(state),
+        on_session_info=_make_session_info_updater(state),
+    )
     state.set(
         proc=proc, conn=conn,
         session_id=new_sid,
@@ -1039,6 +1072,79 @@ def list_daemon_sessions(window_id: int, on_done: Callable) -> None:
             ui.on_main(lambda: on_done(None, True))
 
     future.add_done_callback(_done)
+
+
+def _make_session_info_updater(state):
+    """Return a callback folding ``session_info_update`` into the daemon state.
+
+    The agent's title is authoritative: it patches the cached ``session/list``
+    entry's ``title`` and drops any local override recorded for that session.
+    """
+    window_id = state.get('window_id')
+
+    def on_session_info(session_id: str, title: str) -> None:
+        if not state.patch_session(session_id, 'title', title):
+            acp_log('daemon', f'session_info_update for uncached sid={session_id}', window_id)
+        # The agent's store is authoritative, so a locally set rename is void.
+        state.patch_session(session_id, 'title_override', '')
+        cmd = state.get('agent_cmd')
+        if cmd:
+            _cache_session_title(_cache_dir(), cmd, session_id, None)
+
+    return on_session_info
+
+
+def _cache_session_title(cache_dir: Path, cmd: list, session_id: str, title: str | None) -> None:
+    """Record or clear the local title override for *session_id*."""
+    try:
+        cache.set_session_title(cache_dir, cmd, session_id, title)
+    except Exception as exc:
+        acp_log('daemon', f'failed to cache session title: {exc!r}')
+
+
+def rename_daemon_session(window_id: int, title: str, on_done: Callable | None = None) -> None:
+    """Store a local title override for the daemon's current session.
+
+    ACP has no client-to-agent session rename method, so this records the
+    title client-side only; the agent's own store keeps its title. The
+    override is dropped if the agent later reports a title for the session.
+    """
+    ctx = _require_idle_daemon(
+        window_id, 'ACP: Wait for the current prompt to finish before renaming', on_done,
+    )
+    if ctx is None:
+        return
+    state, _conn, _loop, cmd, _env, _work_dir = ctx
+    session_id = state.get('session_id')
+    if not session_id or not cmd:
+        sublime.status_message('ACP: No active session to rename')
+        if on_done is not None:
+            on_done(False, 'No active session')
+        return
+
+    label = ' '.join(title.split())
+    _cache_session_title(_cache_dir(), cmd, session_id, label or None)
+    state.patch_session(session_id, 'title_override', label)
+    acp_log('daemon', f'local title set to "{label}" for sid={session_id}', window_id)
+    sublime.status_message(f'ACP: Session renamed to "{label or session_id}"')
+    if on_done is not None:
+        on_done(True)
+
+
+def get_daemon_session_title(window_id: int) -> str:
+    """Return the current session's local title override, or ``''``."""
+    state = get_state(window_id)
+    if state is None or not state.is_running():
+        return ''
+    session_id = state.get('session_id')
+    cmd = state.get('agent_cmd')
+    if not session_id or not cmd:
+        return ''
+    try:
+        return cache.get_session_title_override(_cache_dir(), cmd, session_id) or ''
+    except Exception as exc:
+        acp_log('daemon', f'failed to read session title: {exc!r}')
+        return ''
 
 
 def refresh_session_cache(window_id: int) -> None:
@@ -1157,12 +1263,17 @@ def switch_daemon_session(window_id: int, session_id: str,
                 usage_holder: list = []
                 config_holder: list = []
                 pending_strip = [state.get('session_prompt') or '']
+                on_session_info = _make_session_info_updater(state)
 
                 def _on_replay(method: str, params: dict) -> None:
                     if method != 'session/update' or not isinstance(params, dict):
                         return
                     update = params.get('update', {})
                     if not isinstance(update, dict):
+                        return
+                    im, info_sid, info_title = _extract_session_info_update(method, params)
+                    if im:
+                        on_session_info(info_sid, info_title)
                         return
                     matched, commands = _extract_available_commands(method, params)
                     if matched:
@@ -1376,7 +1487,10 @@ def _daemon_thread_main(
             return None, 'error'
         proc, conn, init_result = result
         try:
-            sid, agent_caps = _finalize_daemon_connection(conn, cmd, init_result, usage_updater, strict=True)
+            sid, agent_caps = _finalize_daemon_connection(
+                conn, cmd, init_result, usage_updater, strict=True,
+                on_session_info=_make_session_info_updater(state),
+            )
             acp_log('daemon_session', f'spawn_and_init succeeded: session_id={init_result.get("session_id")}, opened_via={init_result.get("opened_via")}, proc={proc.pid if proc else None}')
 
             state.set(
@@ -1446,6 +1560,7 @@ def _daemon_thread_main(
                     on_commands=_make_commands_updater(cmd),
                     on_usage=usage_updater,
                     show_tool_calls=settings.get('tool_calls', TOOL_CALLS_DEFAULT) == 'enabled',
+                    on_session_info=_make_session_info_updater(state),
                 )
                 if ok == PROMPT_OK:
                     state.set(session_prompt_pending=False)

@@ -3,6 +3,7 @@
     { "caption": "ACP: Actions", "command": "acp_actions" },
     { "caption": "ACP: Start Session", "command": "acp_start" },
     { "caption": "ACP: Switch Session", "command": "acp_switch_session" },
+    { "caption": "ACP: Rename Session", "command": "acp_rename_session" },
     { "caption": "ACP: Stop Session", "command": "acp_stop" },
     { "caption": "ACP: Interrupt Current Prompt", "command": "acp_interrupt" },
     { "caption": "ACP: Switch Model", "command": "acp_switch_model" },
