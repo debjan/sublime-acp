@@ -1282,9 +1282,10 @@ async def acp(
         sid = init_result['session_id']
         opened_via = init_result['opened_via']
         session_error = init_result.get('session_error')
+        effective_session_prompt = session_prompt if opened_via == STATUS_NEW else None
 
         await send_prompt_and_stream(
-            conn, sid, prompt, session_prompt,
+            conn, sid, prompt, effective_session_prompt,
             callback=callback, callback_timeout=callback_timeout,
             workspace_root=cwd,
             permissions_config=permissions_config,

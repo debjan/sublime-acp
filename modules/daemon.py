@@ -61,6 +61,7 @@ from .rpc import (
     PROMPT_SESSION_NOT_FOUND,
     _extract_available_commands,
     _extract_usage_update,
+    _replay_text,
     acp,
     format_replay_update,
     send_prompt_and_stream,
@@ -108,6 +109,8 @@ class DaemonState:
         self.work_dir: str | None = None
         self.model: str | None = None
         self.permissions_config: dict | None = None
+        self.session_prompt: str | None = None
+        self.session_prompt_pending: bool = False
 
     def is_running(self) -> bool:
         with self._lock:
@@ -179,6 +182,8 @@ class DaemonState:
             self.work_dir = None
             self.model = None
             self.permissions_config = None
+            self.session_prompt = None
+            self.session_prompt_pending = False
 
         if stop_idle_timer_func:
             stop_idle_timer_func(window_id)
@@ -853,7 +858,7 @@ async def _reconnect_daemon_session(
     old_conn,
     old_proc,
     on_usage=None,
-) -> tuple[Any, Any, str | None]:
+) -> tuple[Any, Any, str | None, str]:
     """Resolve a daemon session whose live process dropped it.
 
     Closes the stale subprocess/connection and spawns a fresh process,
@@ -861,8 +866,9 @@ async def _reconnect_daemon_session(
     ``Continue session`` use). Falls back to a new session if the resume
     fails even on a fresh process.
 
-    Returns ``(proc, conn, session_id)`` on success, or ``(None, None, None)``
-    when no session could be established (the daemon should then stop).
+    Returns ``(proc, conn, session_id, opened_via)`` on success, or
+    ``(None, None, None, STATUS_NEW)`` when no session could be established
+    (the daemon should then stop).
     """
     def _note(msg: str) -> None:
         ui.on_main(lambda m=msg: ui.append_to_output_view(output_view, m))
@@ -887,7 +893,7 @@ async def _reconnect_daemon_session(
             auth=auth,
         )
     if result is None:
-        return None, None, None
+        return None, None, None, STATUS_NEW
 
     proc, conn, init_result = result
     new_sid, _ = _finalize_daemon_connection(conn, cmd, init_result, on_usage)
@@ -900,7 +906,7 @@ async def _reconnect_daemon_session(
         if session_error := init_result.get('session_error'):
             _note(f'\n**[{session_error}]**\n\n')
         _note('*[Started a new session]*\n')
-    return proc, conn, new_sid
+    return proc, conn, new_sid, opened_via
 
 
 def _window_for_state(state: DaemonState):
@@ -1087,7 +1093,8 @@ def _submit_daemon_task(loop, task_factory: Callable, on_done: Callable | None):
 
 
 def _finish_session_change(state, cmd, sid, ok, error, success_view, success_status,
-                           fail_view, fail_status, on_done, replay_text=None) -> None:
+                           fail_view, fail_status, on_done, replay_text=None,
+                           session_prompt_pending: bool | None = None) -> None:
     if ok:
         acp_log('session_change', f'ok: sid={sid}', state.get('window_id'))
         _update_agent_session_id(cmd, sid)
@@ -1096,6 +1103,8 @@ def _finish_session_change(state, cmd, sid, ok, error, success_view, success_sta
             usage_used=None, usage_size=None,
             has_replied=False, last_activity=time.monotonic(),
         )
+        if session_prompt_pending is not None:
+            state.set(session_prompt_pending=session_prompt_pending)
         refresh_session_cache(state.get('window_id'))
         output_view = state.get('output_view')
         if output_view is not None:
@@ -1147,6 +1156,7 @@ def switch_daemon_session(window_id: int, session_id: str,
                 commands_holder: list = []
                 usage_holder: list = []
                 config_holder: list = []
+                pending_strip = [state.get('session_prompt') or '']
 
                 def _on_replay(method: str, params: dict) -> None:
                     if method != 'session/update' or not isinstance(params, dict):
@@ -1165,6 +1175,21 @@ def switch_daemon_session(window_id: int, session_id: str,
                     cm, config = _extract_config_update(method, params)
                     if cm:
                         config_holder.append(config)
+                        return
+                    kind = update.get('sessionUpdate', update.get('type', ''))
+                    if kind in ('user_message', 'user_message_chunk') and pending_strip[0]:
+                        text = _replay_text(update)
+                        need = pending_strip[0]
+                        if text.startswith(need):
+                            pending_strip[0] = ''
+                            text = text[len(need):]
+                        elif need.startswith(text):
+                            pending_strip[0] = need[len(text):]
+                            return
+                        else:
+                            pending_strip[0] = ''
+                        if text:
+                            chunks.append(f'\n> **User**: {text}\n')
                         return
                     text = format_replay_update(
                         update, thoughts_mode, show_tools, tool_state,
@@ -1224,6 +1249,7 @@ def switch_daemon_session(window_id: int, session_id: str,
                 lambda err: f'ACP: Could not switch session: {err or "unknown error"}',
                 on_done,
                 replay_text=replay_text,
+                session_prompt_pending=False,
             )
 
         ui.on_main(_apply)
@@ -1278,6 +1304,7 @@ def new_daemon_session(window_id: int, on_done: Callable | None = None) -> None:
                 lambda err: f'\n**[Could not start new session: {err or "unknown error"}]**\n',
                 lambda err: f'ACP: Could not start new session: {err or "unknown error"}',
                 on_done,
+                session_prompt_pending=True,
             )
 
         ui.on_main(_apply)
@@ -1357,9 +1384,12 @@ def _daemon_thread_main(
                 session_id=sid, is_busy=False,
                 agent_caps=agent_caps, work_dir=work_dir,
                 model=model, permissions_config=permissions_config,
+                session_prompt=session_prompt,
+                session_prompt_pending=(
+                    init_result.get('opened_via', STATUS_NEW) == STATUS_NEW
+                ),
             )
 
-            first_prompt = True
             while True:
                 item = await async_queue.get()
                 if item is None:
@@ -1406,7 +1436,7 @@ def _daemon_thread_main(
 
                 ok = await send_prompt_and_stream(
                     conn, sid, prompt_text,
-                    session_prompt if first_prompt else None,
+                    session_prompt if state.get('session_prompt_pending') else None,
                     callback=stream_callback, callback_timeout=timeout,
                     workspace_root=work_dir,
                     permissions_config=permissions_config,
@@ -1417,10 +1447,12 @@ def _daemon_thread_main(
                     on_usage=usage_updater,
                     show_tool_calls=settings.get('tool_calls', TOOL_CALLS_DEFAULT) == 'enabled',
                 )
-                if ok != PROMPT_OK:
+                if ok == PROMPT_OK:
+                    state.set(session_prompt_pending=False)
+                else:
                     dismiss_permission_prompt(window_id)
                     if ok in (PROMPT_SESSION_NOT_FOUND, PROMPT_CONNECTION_CLOSED):
-                        proc, conn, sid = await _reconnect_daemon_session(
+                        proc, conn, sid, reopened_via = await _reconnect_daemon_session(
                             cmd, current_env, model, state.get('session_id'), work_dir,
                             output_view, permissions_config, auth,
                             state.get('conn'), state.get('proc'),
@@ -1430,7 +1462,8 @@ def _daemon_thread_main(
                             acp_log('daemon_session', 'session recovery failed - stopping daemon')
                             break
                         state.set(proc=proc, conn=conn, session_id=sid)
-                first_prompt = False
+                        if reopened_via in (STATUS_RESUMED, STATUS_LOADED):
+                            state.set(session_prompt_pending=False)
 
                 acp_log('daemon_session', f'prompt completed: status={ok}')
                 async_queue.task_done()
