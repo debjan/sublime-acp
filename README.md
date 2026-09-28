@@ -6,13 +6,9 @@ Use AI coding agents (Kiro, Opencode, Pi, Droid, Claude Code, Copilot, …) dire
 
 ## Installation
 
-1. Clone or copy this package into your Sublime Text `Packages/` directory:
+Easiest way is to install via Package Control.
 
-```shell
-git clone https://github.com/debjan/sublime-acp ACP
-```
-
-2. Restart Sublime Text.
+For manual installation clone or copy this package into your Sublime Text `Packages/` directory, then restart Sublime Text.
 
 ## Quick Start
 
