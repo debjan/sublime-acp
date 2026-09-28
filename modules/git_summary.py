@@ -44,8 +44,16 @@ def resolve_mode(value: Any) -> str:
     return GIT_SUMMARY_COUNTS
 
 
-def _run_git(work_dir: str, *args: str) -> str | None:
-    """Run a git command in *work_dir*, return stdout or ``None`` on failure."""
+GIT_TIMEOUT_QUICK = 10
+GIT_TIMEOUT_DIFF = 30
+
+
+def _run_git(work_dir: str, *args: str, timeout: int = GIT_TIMEOUT_QUICK) -> str | None:
+    """Run a git command in *work_dir*, return stdout or ``None`` on failure.
+
+    All invocations are read-only, so ``--no-optional-locks`` is passed to
+    avoid blocking on (or triggering) index/background maintenance locks.
+    """
     try:
         hide_kwargs: dict[str, Any] = {}
         if sys.platform == 'win32':
@@ -54,10 +62,10 @@ def _run_git(work_dir: str, *args: str) -> str | None:
             startupinfo.wShowWindow = subprocess.SW_HIDE
             hide_kwargs['startupinfo'] = startupinfo
         proc = subprocess.run(
-            ['git', '-C', work_dir, *args],
+            ['git', '-C', work_dir, '--no-optional-locks', *args],
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
-            timeout=30,
+            timeout=timeout,
             check=False,
             creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
             **hide_kwargs,
@@ -245,16 +253,15 @@ def summarize(
     before: dict[str, str] = base['status']
     blobs: dict[str, dict[str, Any]] = base.get('blobs') or {}
     after = _parse_status(status_out)
-
-    # Fingerprint current content for every path seen before or after.
+    # Fingerprint only files dirty at turn start (clean-start paths use git diff)
     current: dict[str, tuple[str | None, str | None, bool]] = {
-        p: _read_worktree(work_dir, p) for p in set(before) | set(after)
+        p: _read_worktree(work_dir, p) for p in before
     }
 
     def _changed(path: str) -> bool:
         """True when *path*'s content differs from the turn-start snapshot."""
         snap = blobs.get(path, {}).get('hash')
-        cur = current[path][0]
+        cur = current.get(path, (None, None, False))[0]
         if snap is None or cur is None:
             if snap == cur:
                 return after.get(path) != before.get(path)
@@ -290,7 +297,7 @@ def summarize(
     if clean_paths:
         diff_out = _run_git(
             work_dir, 'diff', '--no-color', '--no-ext-diff', base['head'],
-            '--', *clean_paths,
+            '--', *clean_paths, timeout=GIT_TIMEOUT_DIFF,
         )
         if diff_out:
             git_patches = _split_diff(diff_out)

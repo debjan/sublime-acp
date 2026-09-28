@@ -25,6 +25,7 @@ from ..protocol import (
     TIMEOUT_EXCEPTIONS,
     ACPError,
     acp_log,
+    call_in_thread,
     cleanup_process,
     clear_thread_loop,
     close_writer,
@@ -1546,7 +1547,7 @@ def _daemon_thread_main(
                         state.set(permission_pending=False)
 
                 git_mode = git_summary.resolve_mode(settings.get('git_turn_summary', 'counts'))
-                git_base = git_summary.snapshot(work_dir) if git_mode != git_summary.GIT_SUMMARY_OFF else None
+                git_base = await call_in_thread(git_summary.snapshot, work_dir) if git_mode != git_summary.GIT_SUMMARY_OFF else None
 
                 ok = await send_prompt_and_stream(
                     conn, sid, prompt_text,
@@ -1583,7 +1584,8 @@ def _daemon_thread_main(
                 acp_log('daemon_session', f'prompt completed: status={ok}')
                 async_queue.task_done()
                 try:
-                    summary = git_summary.summarize(
+                    summary = await call_in_thread(
+                        git_summary.summarize,
                         git_base, work_dir,
                         include_diff=(git_mode == git_summary.GIT_SUMMARY_DIFF),
                     )

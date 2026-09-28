@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import functools
 
 TIMEOUT_EXCEPTIONS = (asyncio.TimeoutError, TimeoutError)
 """Timeout exception tuple safe on both ends of the supported range.
@@ -46,3 +47,14 @@ def clear_thread_loop() -> None:
     """Clear the current thread's event loop reference (best effort)."""
     with contextlib.suppress(Exception):
         asyncio.set_event_loop(None)
+
+
+async def call_in_thread(func, *args, **kwargs):
+    """Run blocking *func* in the default executor without blocking the loop.
+
+    ``asyncio.to_thread`` only exists on 3.9+, so this uses
+    ``run_in_executor`` directly to stay compatible with 3.8.
+    """
+    loop = asyncio.get_running_loop()
+    call = functools.partial(func, *args, **kwargs)
+    return await loop.run_in_executor(None, call)
