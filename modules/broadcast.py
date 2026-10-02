@@ -32,10 +32,31 @@ def erase_broadcast_status(key, window=None):
     _broadcast_status(key, None, window)
 
 
+def _pretty_model_name(model: str | None) -> str:
+    """Render a cached model value for the status bar.
+
+    Some agents (e.g. ``dsh acp``) encode the model as a JSON pair
+    like ``["provider", "model"]``; show that as ``provider/model``.
+    """
+    if not model:
+        return 'default'
+    text = str(model).strip()
+    if text.startswith('['):
+        try:
+            import json
+
+            parsed = json.loads(text)
+            if isinstance(parsed, list) and len(parsed) == 2:
+                return f'{parsed[0]}/{parsed[1]}'
+        except ValueError:
+            pass
+    return text
+
+
 def daemon_status_text(agent_name: str, agent_cmd: list | None = None) -> str:
     """Return the daemon status text, appending the current model name."""
     model = cache.get_model_name(Path(sublime.cache_path()) / 'ACP', agent_cmd)
-    return f'✓ ACP: {agent_name} [{model or "default"}]'
+    return f'✓ ACP: {agent_name} [{_pretty_model_name(model)}]'
 
 
 def _compact_tokens(value: int) -> str:

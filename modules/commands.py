@@ -959,11 +959,38 @@ class _AcpSwitchConfigOptionCommand(sublime_plugin.WindowCommand):
         asyncio.run_coroutine_threadsafe(_send(), loop)
 
 
+def _flatten_select_options(options: list) -> list:
+    """Flatten ACP select options, expanding grouped entries.
+
+    The ACP schema allows ``options`` to mix plain ``{value, name}``
+    entries with grouped ``{group, options: [...]}`` entries (as sent
+    by e.g. ``dsh acp``). Sublime's list input has no grouping, so
+    grouped children are hoisted with their group label preserved.
+    """
+    flat: list = []
+    for o in options or []:
+        if not isinstance(o, dict):
+            continue
+        nested = o.get('options')
+        if isinstance(nested, list) and 'value' not in o:
+            group = o.get('group') or o.get('name') or ''
+            for child in nested:
+                if not isinstance(child, dict):
+                    continue
+                item = dict(child)
+                if group and not item.get('group'):
+                    item['group'] = group
+                flat.append(item)
+        else:
+            flat.append(o)
+    return flat
+
+
 class _AcpConfigOptionInputHandler(sublime_plugin.ListInputHandler):
     """Option list for Switch Model/Mode/Thought Level."""
 
     def __init__(self, options: list, current: Any, label: str) -> None:
-        self._options = options
+        self._options = _flatten_select_options(options)
         self._current = current
         self._label = label
 
@@ -983,6 +1010,9 @@ class _AcpConfigOptionInputHandler(sublime_plugin.ListInputHandler):
         for i, o in enumerate(self._options):
             name = o.get('name') or o.get('value', '')
             value_str = o.get('value', '')
+            group = o.get('group') or ''
+            if group:
+                name = f'{group} / {name}'
             if is_current := o.get('value') == self._current:
                 selected_index = i
             kind = (green_id, '✓', '') if is_current else (ambiguous_id, '', '')
