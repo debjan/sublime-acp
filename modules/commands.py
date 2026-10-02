@@ -328,6 +328,9 @@ class AcpActionsCommand(sublime_plugin.WindowCommand):
         return bool(settings().get('actions'))
 
 
+_pending_drafts: dict[int, str] = {}
+
+
 class AcpInputCommand(sublime_plugin.WindowCommand):
     """Shows the prompt input panel with @ file autocomplete and runs the ACP command."""
 
@@ -358,10 +361,18 @@ class AcpInputCommand(sublime_plugin.WindowCommand):
         agents = _load_agents()
         slash_commands = agents.get(cmd[0] if cmd else '', {}).get('commands')
 
+        owner_id = daemon_window_id if isinstance(daemon_window_id, int) else self.window.id()
+        if not initial_text:
+            initial_text = _pending_drafts.get(owner_id, '')
+
+        def on_change(text):
+            _pending_drafts[owner_id] = text
+
         def on_cancel():
             pass
 
         def on_done(text):
+            _pending_drafts.pop(owner_id, None)
             if not exec_state.get('cmd'):
                 sublime.error_message('ACP: No command configured')
                 return
@@ -369,14 +380,13 @@ class AcpInputCommand(sublime_plugin.WindowCommand):
 
         caption = '✨'
         input_view = self.window.show_input_panel(
-            caption, initial_text, on_done, None, on_cancel
+            caption, initial_text, on_done, on_change, on_cancel
         )
         if input_view:
             input_view.set_name(INPUT_VIEW_NAME)
             input_view.settings().set('auto_complete', True)
             input_view.settings().set('auto_complete_selector', 'text')
             input_view.settings().set('acp_slash_commands', slash_commands or [])
-        owner_id = daemon_window_id if isinstance(daemon_window_id, int) else self.window.id()
         daemon_state = get_state(owner_id)
         if daemon_state is not None:
             daemon_state.set(input_view=input_view)
