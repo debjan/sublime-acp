@@ -557,6 +557,8 @@ async def _handle_init_phase(
                     'value': model,
                 })
                 if isinstance(response, dict):
+                    if refreshed := response.get('configOptions'):
+                        config_options = refreshed
                     confirmed_model = (
                         response.get('currentValue')
                         or response.get('value')

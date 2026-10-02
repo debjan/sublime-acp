@@ -14,6 +14,13 @@ STATUS_LOADED = 'loaded'
 STATUS_ERROR = 'error'
 
 
+def _config_options(result: Any) -> list | None:
+    """Return the ``configOptions`` list from a session response, or ``None``."""
+    if isinstance(result, dict):
+        return result.get('configOptions')
+    return None
+
+
 async def new_session(
     conn: Connection,
     base_params: dict[str, Any],
@@ -33,7 +40,7 @@ async def new_session(
     if not result or not result.get('sessionId'):
         acp_log('session', 'Session setup did not return a sessionId')
         return None, STATUS_NEW, None, None
-    return result['sessionId'], STATUS_NEW, result.get('configOptions'), None
+    return result['sessionId'], STATUS_NEW, _config_options(result), None
 
 
 async def _fallback_new(
@@ -84,10 +91,10 @@ async def resolve_session(
     if session_id is not None:
         if supports_resume(agent_caps):
             try:
-                await conn.send_request('session/resume', {
+                result = await conn.send_request('session/resume', {
                     'sessionId': session_id, **base_params,
                 })
-                return session_id, STATUS_RESUMED, None, None
+                return session_id, STATUS_RESUMED, _config_options(result), None
             except ACPError as exc:
                 acp_log('session', f'session/resume failed: {exc} - falling back to a new session')
                 return await _fallback_new(
@@ -95,10 +102,10 @@ async def resolve_session(
                 )
         elif supports_load(agent_caps):
             try:
-                await conn.send_request('session/load', {
+                result = await conn.send_request('session/load', {
                     'sessionId': session_id, **base_params,
                 })
-                return session_id, STATUS_LOADED, None, None
+                return session_id, STATUS_LOADED, _config_options(result), None
             except ACPError as exc:
                 acp_log('session', f'session/load failed: {exc} - falling back to a new session')
                 return await _fallback_new(

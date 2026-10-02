@@ -387,12 +387,14 @@ def _make_usage_updater(state: DaemonState):
 def _install_notification_handler(conn, cmd, on_usage=None, on_session_info=None):
     """Keep a persistent notification handler on the daemon connection.
 
-    Persists ``available_commands_update`` payloads to the agent cache as they
-    arrive, so commands are captured even when the agent announces them after
-    the init phase has returned. Forwards ``usage_update`` payloads to
-    *on_usage* and ``session_info_update`` payloads to *on_session_info*;
-    other notifications are ignored here; prompt streaming installs its own
-    callbacks via ``swap_callbacks``, which restores this handler afterwards.
+    Persists ``available_commands_update`` and ``config_option_update``
+    payloads to the agent cache as they arrive, so commands and dependent
+    config options (e.g. ``thought_level`` after a model change) are captured
+    even when the agent announces them after the init phase has returned.
+    Forwards ``usage_update`` payloads to *on_usage* and
+    ``session_info_update`` payloads to *on_session_info*; other notifications
+    are ignored here; prompt streaming installs its own callbacks via
+    ``swap_callbacks``, which restores this handler afterwards.
     """
     update_commands = _make_commands_updater(cmd)
 
@@ -407,6 +409,12 @@ def _install_notification_handler(conn, cmd, on_usage=None, on_session_info=None
         if matched:
             acp_log('daemon', f'available_commands_update ({len(commands or [])} commands)')
             update_commands(commands)
+            return
+        config_matched, config_options = _extract_config_update(method, params)
+        if config_matched:
+            if config_options:
+                acp_log('daemon', 'config_option_update')
+                _refresh_cached_config(cmd, config_options)
             return
         usage_matched, used, size = _extract_usage_update(method, params)
         if usage_matched and on_usage is not None:

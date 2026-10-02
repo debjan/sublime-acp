@@ -883,7 +883,9 @@ class _AcpSwitchConfigOptionCommand(sublime_plugin.WindowCommand):
                     'value': value,
                 })
                 confirmed = value
+                refreshed = None
                 if isinstance(response, dict):
+                    refreshed = response.get('configOptions')
                     confirmed = (
                         response.get('currentValue')
                         or response.get('value')
@@ -893,10 +895,13 @@ class _AcpSwitchConfigOptionCommand(sublime_plugin.WindowCommand):
                 with cache.cache_lock:
                     agents = _load_agents()
                     entry = agents.get(agent_cmd[0], {})
-                    for opt in entry.get('config_options') or []:
-                        if opt.get('id') == config_id:
-                            opt['currentValue'] = confirmed
-                            break
+                    if refreshed:
+                        entry['config_options'] = refreshed
+                    else:
+                        for opt in entry.get('config_options') or []:
+                            if opt.get('id') == config_id:
+                                opt['currentValue'] = confirmed
+                                break
                     agents[agent_cmd[0]] = entry
                     cache.save_agents(cache_dir, agents)
                 acp_log(
