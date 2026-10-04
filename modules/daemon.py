@@ -29,11 +29,13 @@ from ..protocol import (
     cleanup_process,
     clear_thread_loop,
     close_writer,
+    fork_session,
     list_sessions,
     load_session_with_replay,
     new_daemon_loop,
     new_session,
     signal_process_group,
+    supports_fork,
     supports_list,
     supports_load,
     supports_resume,
@@ -158,8 +160,9 @@ class DaemonState:
 
         Args:
             method: One of ``'resume'``, ``'load'``, ``'resume_or_load'``,
-                or ``'list'``, mapping to ``session/resume``,
-                ``session/load``, either of those, or ``session/list``.
+                ``'fork'``, or ``'list'``, mapping to ``session/resume``,
+                ``session/load``, either of those, ``session/fork``,
+                or ``session/list``.
 
         Returns:
             ``True`` when the cached ``agent_caps`` advertises the method.
@@ -174,6 +177,8 @@ class DaemonState:
             return supports_load(caps)
         if method == 'resume_or_load':
             return supports_resume_or_load(caps)
+        if method == 'fork':
+            return supports_fork(caps)
         raise ValueError(f'Unknown capability method: {method!r}')
 
     def reset(self, stop_idle_timer_func=None) -> None:
@@ -1430,6 +1435,78 @@ def new_daemon_session(window_id: int, on_done: Callable | None = None) -> None:
         ui.on_main(_apply)
 
     future.add_done_callback(_done)
+
+
+def fork_daemon_session(window_id: int, session_id: str | None = None,
+                        on_done: Callable | None = None) -> None:
+    """Fork a session via the unstable ``session/fork`` method.
+
+    Sends ``session/fork`` for *session_id* (defaulting to the daemon's
+    current session) on the live connection and switches the daemon to
+    the forked session without respawning it. The fork inherits the
+    source session's history, so ``session_prompt`` is not resent. Calls
+    *on_done(ok, error)* on the main thread.
+    """
+    ctx = _require_idle_daemon(
+        window_id, 'ACP: Wait for the current prompt to finish before forking', on_done)
+    if ctx is None:
+        return
+    state, conn, loop, cmd, _env, work_dir = ctx
+    source_id = session_id or state.get('session_id')
+    if not source_id:
+        sublime.status_message('ACP: No active session to fork')
+        if on_done is not None:
+            on_done(False, 'No active session')
+        return
+    if not state.supports('fork'):
+        sublime.status_message('ACP: agent does not support session/fork')
+        if on_done is not None:
+            on_done(False, 'Agent does not support session/fork')
+        return
+
+    async def _do_fork():
+        state.set(is_busy=True)
+        try:
+            try:
+                new_sid, _, fork_opts, _ = await fork_session(conn, source_id, work_dir)
+            except Exception as exc:
+                acp_log('fork_session', f'session/fork failed: {exc!r}')
+                return None, None, str(exc)
+            if not new_sid:
+                return None, None, 'Agent did not return a sessionId'
+            return new_sid, fork_opts, None
+        finally:
+            state.set(is_busy=False)
+
+    future = _submit_daemon_task(loop, _do_fork, on_done)
+    if future is None:
+        return
+
+    def _done_fork(f):
+        try:
+            new_sid, fork_opts, error = f.result()
+        except Exception as exc:
+            acp_log('fork_session', f'fork session raised: {exc!r}')
+            new_sid, fork_opts, error = None, None, str(exc)
+        ok = new_sid is not None
+
+        def _apply():
+            if ok and fork_opts:
+                _apply_switched_config(cmd, {'configOptions': fork_opts}, None)
+                _refresh_daemon_status(state)
+            _finish_session_change(
+                state, cmd, new_sid, ok, error,
+                lambda sid: f'\n*[Forked session: {sid}]*\n',
+                lambda sid: f'ACP: Forked session {sid[-8:]}',
+                lambda err: f'\n**[Could not fork session: {err or "unknown error"}]**\n',
+                lambda err: f'ACP: Could not fork session: {err or "unknown error"}',
+                on_done,
+                session_prompt_pending=False,
+            )
+
+        ui.on_main(_apply)
+
+    future.add_done_callback(_done_fork)
 
 
 def _daemon_thread_main(

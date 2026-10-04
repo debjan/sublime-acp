@@ -34,6 +34,7 @@ from .daemon import (
     _start_idle_timer,
     _stop_daemon_async,
     execute_prompt,
+    fork_daemon_session,
     get_daemon_session_title,
     get_state,
     is_unloading,
@@ -704,6 +705,105 @@ class AcpSwitchSessionCommand(sublime_plugin.WindowCommand):
 
     def _on_switched(self, ok, error=None):
         """Focus the input panel after a switch, reopening it if missing."""
+        if not ok:
+            return
+        state = get_state(self.window.id())
+        if state is None:
+            return
+        input_view = state.get('input_view')
+        if input_view is not None and input_view.window() is not None:
+            self.window.focus_view(input_view)
+        else:
+            self.window.run_command('acp_input', _acp_input_kwargs(state))
+
+
+class AcpForkSessionCommand(sublime_plugin.WindowCommand):
+    """Fork a session via the unstable ``session/fork`` method."""
+
+    def is_enabled(self):
+        """Enable only while the daemon is idle and the agent supports fork."""
+        state = get_state(self.window.id())
+        return (
+            state is not None and state.is_running()
+            and not state.get('is_busy')
+            and state.supports('fork')
+        )
+
+    def run(self, session_id: str | None = None, **kwargs: Any):
+        """Fork *session_id*, or pick from ``session/list`` when omitted."""
+        if session_id is None:
+            session_id = kwargs.get('Session')
+        if session_id is not None:
+            self._fork(session_id)
+            return
+        if is_unloading():
+            sublime.status_message('ACP is reloading, please retry in a moment')
+            return
+        window_id = self.window.id()
+        state = get_state(window_id)
+        if state is None or not state.is_running():
+            sublime.status_message('ACP: No agent session running in this window')
+            return
+        if state.get('is_busy'):
+            sublime.status_message('ACP: Wait for the current prompt to finish before forking')
+            return
+        if not state.supports('fork'):
+            sublime.status_message('ACP: agent does not support session/fork')
+            return
+        list_daemon_sessions(window_id, self._on_listed)
+
+    def _fork(self, session_id: str):
+        """Fork *session_id* on the running daemon."""
+        if not session_id:
+            return
+        fork_daemon_session(self.window.id(), session_id, on_done=self._on_forked)
+
+    def _on_listed(self, sessions, supported):
+        if sessions is None:
+            if not supported:
+                state = get_state(self.window.id())
+                current = state.get('session_id') if state is not None else None
+                if current:
+                    self._fork(current)
+                else:
+                    sublime.status_message('ACP: agent does not support session/list')
+            else:
+                sublime.status_message('ACP: could not list sessions')
+            return
+        window_id = self.window.id()
+        state = get_state(window_id)
+        if state is not None and state.is_running():
+            _apply_title_overrides(state.get('agent_cmd'), sessions)
+            state.set(sessions_cache=sessions)
+        current = state.get('session_id') if state is not None else None
+        ambiguous_id = getattr(sublime, 'KIND_ID_AMBIGUOUS', 0)
+        green_id = getattr(sublime, 'KIND_ID_COLOR_GREENISH', ambiguous_id)
+        items = []
+        selected_index = 0
+        for i, s in enumerate(sessions):
+            title = _display_title(s)
+            sid = s.get('sessionId', '')
+            updated = _format_local_time(s.get('updatedAt'))
+            detail = sid if len(sid) <= 32 else f'…{sid[-16:]}'
+            if updated:
+                detail = f'{updated} · {detail}'
+            if is_current := bool(sid) and sid == current:
+                selected_index = i
+            kind = (green_id, '✓', '') if is_current else (ambiguous_id, '', '')
+            items.append(sublime.QuickPanelItem(title, details=detail, kind=kind))
+        self._sessions = sessions
+        self.window.show_quick_panel(items, self._on_pick, selected_index=selected_index)
+
+    def _on_pick(self, index):
+        if index == -1:
+            return
+        session_id = (self._sessions or [])[index].get('sessionId')
+        if not session_id:
+            return
+        self._fork(session_id)
+
+    def _on_forked(self, ok, error=None):
+        """Focus the input panel after a fork, reopening it if missing."""
         if not ok:
             return
         state = get_state(self.window.id())

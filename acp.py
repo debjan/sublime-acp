@@ -8,6 +8,7 @@ from .modules import file_walker
 from .modules.commands import (
     AcpActionsCommand,
     AcpCommand,
+    AcpForkSessionCommand,
     AcpInputCommand,
     AcpInterruptCommand,
     AcpRenameSessionCommand,

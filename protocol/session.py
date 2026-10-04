@@ -11,6 +11,7 @@ from .log import acp_log
 STATUS_NEW = 'new'
 STATUS_RESUMED = 'resumed'
 STATUS_LOADED = 'loaded'
+STATUS_FORKED = 'forked'
 STATUS_ERROR = 'error'
 
 
@@ -166,6 +167,45 @@ def supports_list(agent_caps: dict | None) -> bool:
     """Return whether the agent advertises ``session/list`` support."""
     sess_caps = (agent_caps or {}).get('sessionCapabilities') or {}
     return isinstance(sess_caps.get('list'), dict)
+
+
+def supports_fork(agent_caps: dict | None) -> bool:
+    """Return whether the agent advertises ``session/fork`` support."""
+    caps = agent_caps or {}
+    sess_caps = caps.get('sessionCapabilities') or {}
+    if isinstance(sess_caps.get('fork'), dict):
+        return True
+    # Pre-stabilization shape from the fork RFD (``session: { fork: {} }``).
+    legacy = caps.get('session') or {}
+    return isinstance(legacy.get('fork'), dict)
+
+
+async def fork_session(
+    conn: Connection,
+    session_id: str,
+    cwd: str | None,
+) -> tuple[str | None, str, list | None, str | None]:
+    """Fork *session_id* via the unstable ``session/fork`` method.
+
+    Args:
+        conn: The active connection to the agent.
+        session_id: ID of the session to fork.
+        cwd: Working directory for the forked session.
+
+    Returns:
+        ``(new_session_id, STATUS_FORKED, config_options, None)`` or
+        ``(None, STATUS_FORKED, None, None)`` if the agent did not return
+        a ``sessionId``.
+    """
+    result = await conn.send_request('session/fork', {
+        'sessionId': session_id,
+        'cwd': cwd or os.getcwd(),
+        'mcpServers': [],
+    })
+    if not result or not result.get('sessionId'):
+        acp_log('session', 'Session fork did not return a sessionId')
+        return None, STATUS_FORKED, None, None
+    return result['sessionId'], STATUS_FORKED, _config_options(result), None
 
 
 async def list_sessions(
