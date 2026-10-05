@@ -99,7 +99,7 @@ sequenceDiagram
 - **One-shot is a safe sandbox.** Because writes are denied and the process exits after one reply, one-shot prompts are a good place to test prompts or talk to agents you don't fully trust yet.
 - **Quick actions are just prompts.** The *ACP: Actions* quick panel lists the entries from the `actions` setting - add your own (e.g. *"Suggest tests"*, *"Review for security"*).
 - **Watch the status bar.** The daemon state (✓ *ACP: [model]*) is broadcast to every view in the window, so you can tell at a glance whether a session is running and which model is active.
-- **Debugging.** If something misbehaves, set `"debug": true` in settings; tagged JSON-RPC logs then appear in the dedicated ACP Log output panel (`View > Output > ACP Log`).
+- **Debugging.** If something misbehaves, set `"debug": true` in settings; tagged JSON-RPC logs then appear in the dedicated ACP Log output panel (`View > Output > ACP Log`). Debug mode also enables *ACP: Send manual request* for raw ACP methods on the live daemon connection (see [daemon.md](daemon.md#manual-requests-debug-only)).
 
 ## Where the code lives
 

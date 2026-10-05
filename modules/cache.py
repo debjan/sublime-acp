@@ -185,6 +185,30 @@ def get_model_name(cache_dir: Path, cmd: list | None) -> str | None:
     return None
 
 
+def set_config_option_value(cache_dir: Path, cmd: list | None, config_id: str, value: str) -> None:
+    """Set ``currentValue`` for one cached config option.
+
+    A no-op when the agent entry or option is missing, or the value is
+    unchanged, so redundant syncs do not rewrite the cache file.
+    """
+    if not cmd or not config_id:
+        return
+    with cache_lock:
+        agents = load_agents(cache_dir)
+        entry = agents.get(cmd[0])
+        if entry is None:
+            return
+        for opt in entry.get('config_options') or []:
+            if isinstance(opt, dict) and opt.get('id') == config_id:
+                if opt.get('currentValue') == value:
+                    return
+                opt['currentValue'] = value
+                break
+        else:
+            return
+        save_agents(cache_dir, agents)
+
+
 def clear_session_id(cache_dir: Path, cmd: list) -> None:
     """Clear the cached ``last_session_id`` for an agent."""
     with cache_lock:

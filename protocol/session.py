@@ -169,13 +169,25 @@ def supports_list(agent_caps: dict | None) -> bool:
     return isinstance(sess_caps.get('list'), dict)
 
 
+def supports_close(agent_caps: dict | None) -> bool:
+    """Return whether the agent advertises ``session/close`` support."""
+    sess_caps = (agent_caps or {}).get('sessionCapabilities') or {}
+    return isinstance(sess_caps.get('close'), dict)
+
+
+def supports_delete(agent_caps: dict | None) -> bool:
+    """Return whether the agent advertises ``session/delete`` support."""
+    sess_caps = (agent_caps or {}).get('sessionCapabilities') or {}
+    return isinstance(sess_caps.get('delete'), dict)
+
+
 def supports_fork(agent_caps: dict | None) -> bool:
     """Return whether the agent advertises ``session/fork`` support."""
     caps = agent_caps or {}
     sess_caps = caps.get('sessionCapabilities') or {}
     if isinstance(sess_caps.get('fork'), dict):
         return True
-    # Pre-stabilization shape from the fork RFD (``session: { fork: {} }``).
+
     legacy = caps.get('session') or {}
     return isinstance(legacy.get('fork'), dict)
 

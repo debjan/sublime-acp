@@ -62,6 +62,10 @@ flowchart LR
 - **Idle timeout** - a timer checks every 30 s; after `daemon_idle_timeout` seconds of inactivity the daemon shuts itself down. A pending permission prompt counts as activity, so the idle timer never kills a daemon while a prompt is open (`permission_pending` flag).
 - **Manual stop / window close** - posts a `None` sentinel to the queue, joins the thread (5 s timeout; on timeout the process group is force-killed), resets state, and removes the registry entry.
 
+## Manual requests (debug only)
+
+With `"debug": true`, *ACP: Send manual request* sends a raw ACP method on the live daemon connection. Pick a method from the quick panel (or `custom` for a typed name), edit the prefilled JSON params in the scratch tab, then Execute. `session/cancel` and `session/list` also work while a prompt is in flight; `session/delete` asks for confirmation. `session/new`, `session/load`, `session/resume`, and `session/fork` switch the daemon to the returned session. Request and result render in the chat tab.
+
 ## Error handling
 
 | Failure                        | Behavior                                        |

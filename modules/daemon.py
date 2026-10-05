@@ -35,6 +35,8 @@ from ..protocol import (
     new_daemon_loop,
     new_session,
     signal_process_group,
+    supports_close,
+    supports_delete,
     supports_fork,
     supports_list,
     supports_load,
@@ -53,6 +55,11 @@ from .config import (
     TURN_DIVIDER,
 )
 from .config import settings as load_settings
+from .elicitation import (
+    dismiss_elicitation_prompt,
+    invalidate_elicit_lock,
+    resolve_elicitation,
+)
 from .permissions import (
     dismiss_permission_prompt,
     invalidate_prompt_lock,
@@ -160,9 +167,10 @@ class DaemonState:
 
         Args:
             method: One of ``'resume'``, ``'load'``, ``'resume_or_load'``,
-                ``'fork'``, or ``'list'``, mapping to ``session/resume``,
-                ``session/load``, either of those, ``session/fork``,
-                or ``session/list``.
+                ``'list'``, ``'close'``, ``'delete'``, or ``'fork'``, mapping
+                to ``session/resume``, ``session/load``, either of those,
+                ``session/list``, ``session/close``, ``session/delete``,
+                or ``session/fork``.
 
         Returns:
             ``True`` when the cached ``agent_caps`` advertises the method.
@@ -177,6 +185,10 @@ class DaemonState:
             return supports_load(caps)
         if method == 'resume_or_load':
             return supports_resume_or_load(caps)
+        if method == 'close':
+            return supports_close(caps)
+        if method == 'delete':
+            return supports_delete(caps)
         if method == 'fork':
             return supports_fork(caps)
         raise ValueError(f'Unknown capability method: {method!r}')
@@ -220,9 +232,11 @@ class DaemonState:
 
         if window_id is not None:
             invalidate_prompt_lock(window_id)
+            invalidate_elicit_lock(window_id)
 
         if permission_pending and window_id is not None:
             dismiss_permission_prompt(window_id)
+            dismiss_elicitation_prompt(window_id)
 
         if input_view is not None:
             def _hide_input_panel():
@@ -396,6 +410,8 @@ def _install_notification_handler(conn, cmd, on_usage=None, on_session_info=None
     payloads to the agent cache as they arrive, so commands and dependent
     config options (e.g. ``thought_level`` after a model change) are captured
     even when the agent announces them after the init phase has returned.
+    Persists ``current_mode_update`` payloads the same way, so the mode
+    picker stays accurate when the mode changes outside this plugin.
     Forwards ``usage_update`` payloads to *on_usage* and
     ``session_info_update`` payloads to *on_session_info*; other notifications
     are ignored here; prompt streaming installs its own callbacks via
@@ -417,9 +433,16 @@ def _install_notification_handler(conn, cmd, on_usage=None, on_session_info=None
             return
         config_matched, config_options = _extract_config_update(method, params)
         if config_matched:
-            if config_options:
-                acp_log('daemon', 'config_option_update')
-                _refresh_cached_config(cmd, config_options)
+            acp_log('daemon', 'config_option_update')
+            _refresh_cached_config(cmd, config_options)
+            return
+        mode_id = _extract_mode_update(method, params)
+        if mode_id is not None:
+            acp_log('daemon', f'current_mode_update (mode={mode_id})')
+            try:
+                cache.set_config_option_value(_cache_dir(), cmd, 'mode', mode_id)
+            except Exception as exc:
+                acp_log('switch_session', f'failed to refresh cached mode: {exc!r}')
             return
         usage_matched, used, size = _extract_usage_update(method, params)
         if usage_matched and on_usage is not None:
@@ -436,11 +459,22 @@ def _extract_config_update(method: str, params: dict) -> tuple[bool, Any]:
     update = params.get('update', {})
     if not isinstance(update, dict):
         return False, None
-    if update.get('sessionUpdate') not in ('config_option_update', 'current_mode_update'):
+    if update.get('sessionUpdate') != 'config_option_update':
         return False, None
-    if update.get('sessionUpdate') == 'current_mode_update':
-        return True, None
     return True, update.get('configOptions')
+
+
+def _extract_mode_update(method: str, params: dict) -> str | None:
+    """Return the new mode id for a ``current_mode_update`` notification, or ``None``."""
+    if method != 'session/update' or not isinstance(params, dict):
+        return None
+    update = params.get('update', {})
+    if not isinstance(update, dict):
+        return None
+    if update.get('sessionUpdate') != 'current_mode_update':
+        return None
+    mode_id = update.get('currentModeId')
+    return mode_id if isinstance(mode_id, str) and mode_id else None
 
 
 def _refresh_cached_config(cmd, config_options) -> None:
@@ -1509,6 +1543,73 @@ def fork_daemon_session(window_id: int, session_id: str | None = None,
     future.add_done_callback(_done_fork)
 
 
+def adopt_manual_session(window_id: int, method: str, params: dict, result) -> None:
+    """Switch the daemon to the session from a manual session-changing request.
+
+    Manual ``session/new|load|resume|fork`` results are otherwise only
+    rendered to the output view, leaving the daemon talking to the previous
+    session. Mirrors the state transition of the built-in session commands:
+    a fresh ``new`` session keeps ``session_prompt_pending`` so the session
+    prompt is sent with the next user prompt (cf. :func:`new_daemon_session`),
+    while ``load``/``resume``/``fork`` inherit history (cf.
+    :func:`switch_daemon_session`, :func:`fork_daemon_session`). No-op
+    unless a usable session id is found and the daemon is still running.
+    Safe to call from a background thread; the transition itself runs on
+    the main thread.
+
+    Unlike the built-in switch, no transcript is replayed into the output
+    view; only a one-line note is appended.
+    """
+    if method == 'session/new':
+        new_sid = result.get('sessionId') if isinstance(result, dict) else None
+        note, status, prompt_pending = (
+            '\n*[Started new session: {sid}]*\n',
+            'ACP: Started new session {short}',
+            True,
+        )
+    elif method in ('session/load', 'session/resume'):
+        new_sid = params.get('sessionId')
+        note, status, prompt_pending = (
+            '\n*[Switched to session: {sid}]*\n',
+            'ACP: Switched to session {short}',
+            False,
+        )
+    elif method == 'session/fork':
+        new_sid = result.get('sessionId') if isinstance(result, dict) else None
+        note, status, prompt_pending = (
+            '\n*[Forked session: {sid}]*\n',
+            'ACP: Forked session {short}',
+            False,
+        )
+    else:
+        return
+    if not isinstance(new_sid, str) or not new_sid:
+        return
+    state = get_state(window_id)
+    if state is None or not state.is_running():
+        return
+    cmd = state.get('agent_cmd')
+
+    def _apply():
+        st = get_state(window_id)
+        if st is None or not st.is_running():
+            return
+        if isinstance(result, dict) and result.get('configOptions'):
+            _apply_switched_config(cmd, result, None)
+            _refresh_daemon_status(st)
+        _finish_session_change(
+            st, cmd, new_sid, True, None,
+            lambda sid: note.format(sid=sid),
+            lambda sid: status.format(sid=sid, short=sid[-8:]),
+            lambda err: f'\n**[Could not switch session: {err or "unknown error"}]**\n',
+            lambda err: f'ACP: Could not switch session: {err or "unknown error"}',
+            None,
+            session_prompt_pending=prompt_pending,
+        )
+
+    ui.on_main(_apply)
+
+
 def _daemon_thread_main(
     window_id: int,
     cmd: list,
@@ -1631,6 +1732,19 @@ def _daemon_thread_main(
                     finally:
                         state.set(permission_pending=False)
 
+                async def _on_elicitation(params):
+                    state.set(permission_pending=True, last_activity=time.monotonic())
+                    try:
+                        return await resolve_elicitation(
+                            params, window_id, loop=loop,
+                            timeout=settings.get(
+                                'permission_prompt_timeout',
+                                PERMISSION_PROMPT_TIMEOUT,
+                            ),
+                        )
+                    finally:
+                        state.set(permission_pending=False)
+
                 git_mode = git_summary.resolve_mode(settings.get('git_turn_summary', 'counts'))
                 git_base = await call_in_thread(git_summary.snapshot, work_dir) if git_mode != git_summary.GIT_SUMMARY_OFF else None
 
@@ -1647,11 +1761,13 @@ def _daemon_thread_main(
                     on_usage=usage_updater,
                     show_tool_calls=settings.get('tool_calls', TOOL_CALLS_DEFAULT) == 'enabled',
                     on_session_info=_make_session_info_updater(state),
+                    on_elicitation=_on_elicitation,
                 )
                 if ok == PROMPT_OK:
                     state.set(session_prompt_pending=False)
                 else:
                     dismiss_permission_prompt(window_id)
+                    dismiss_elicitation_prompt(window_id)
                     if ok in (PROMPT_SESSION_NOT_FOUND, PROMPT_CONNECTION_CLOSED):
                         proc, conn, sid, reopened_via = await _reconnect_daemon_session(
                             cmd, current_env, model, state.get('session_id'), work_dir,
@@ -1764,6 +1880,7 @@ def _stop_daemon(window_id: int, join_timeout: float = 5.0) -> None:
 
     if state.get('permission_pending'):
         dismiss_permission_prompt(window_id)
+        dismiss_elicitation_prompt(window_id)
 
     s = state.get('loop', 'queue', 'is_busy', 'conn')
     loop, async_queue, is_busy, conn = s['loop'], s['queue'], s['is_busy'], s['conn']

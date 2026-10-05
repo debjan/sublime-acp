@@ -164,7 +164,7 @@ def clear_panel_cache(window_id: int | None = None) -> None:
         _configured_windows.discard(window_id)
 
 
-def _write_panel(view: sublime.View, edit: sublime.Edit, fn: Callable[[sublime.Edit], None]) -> None:
+def _write_panel(view: sublime.View, edit: sublime.Edit, fn: Callable[[sublime.Edit], object]) -> None:
     """Run *fn* with the panel writable, restoring read-only afterwards."""
     if was_read_only := view.is_read_only():
         view.set_read_only(False)

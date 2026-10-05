@@ -51,6 +51,9 @@ _INITIALIZE_PARAMS = {
             'readTextFile': True,
             'writeTextFile': True,
         },
+        'elicitation': {
+            'form': {},
+        },
     },
     'clientInfo': {'name': 'sublime-acp', 'version': '1.0.0'},
 }
@@ -602,15 +605,18 @@ async def _handle_agent_request(
     permissions_config: dict | None = None,
     mode: str = 'one-shot',
     on_permission_prompt: Any | None = None,
+    on_elicitation: Any | None = None,
 ) -> bool:
     """Handle an incoming agent request and send a response.
 
     Dispatches to appropriate handlers for ``session/request_permission``,
-    ``fs/read_text_file``, and ``fs/write_text_file`` methods. All three
-    resolve through the permission system: reads use kind ``read_file``
+    ``elicitation/create``, ``fs/read_text_file``, and
+    ``fs/write_text_file`` methods. The first three resolve through the
+    permission system: reads use kind ``read_file``
     (auto-allowed by the default ``read*`` rule), writes use kind
     ``write_file`` (prompted in daemon mode, denied elsewhere unless
     auto-allowed). Denied fs operations receive a JSON-RPC error.
+    Elicitation without an interactive handler is cancelled (one-shot).
     Unhandled methods return ``False``.
     """
     try:
@@ -622,6 +628,10 @@ async def _handle_agent_request(
                 msg_id,
                 {'outcome': {'outcome': 'selected' if opt_id else 'cancelled', 'optionId': opt_id}},
             )
+            return True
+        elif method == 'elicitation/create':
+            result = await _resolve_elicitation(params, on_elicitation)
+            await conn.respond_to_request(msg_id, result)
             return True
         elif method == 'fs/read_text_file':
             if await _check_fs_permission(
@@ -724,6 +734,29 @@ async def _resolve_permission_id(
     if on_permission_prompt:
         return await on_permission_prompt(params)
     return await resolve_permission(params, permissions_config)
+
+
+async def _resolve_elicitation(
+    params: dict[str, Any],
+    on_elicitation: Any | None,
+) -> dict[str, Any]:
+    """Resolve an ``elicitation/create`` request to a result dict.
+
+    ``on_elicitation`` (wired by the daemon) collects the form
+    interactively; otherwise the request is cancelled (one-shot,
+    init phase, and probe have no interactive window).
+
+    Args:
+        params: An ``elicitation/create``-shaped params dict.
+        on_elicitation: Optional callable returning the result dict
+            (``{"action": ...}``) for interactive prompts.
+
+    Returns:
+        The elicitation result dict.
+    """
+    if on_elicitation:
+        return await on_elicitation(params)
+    return {'action': 'cancel'}
 
 
 async def _check_fs_permission(
@@ -1066,10 +1099,12 @@ async def _handle_stream_request(
     permissions_config: dict | None,
     mode: str,
     on_permission_prompt: Any | None,
+    on_elicitation: Any | None = None,
 ) -> None:
     handled = await _handle_agent_request(
         conn, msg_id, method, params,
         ws_root, permissions_config, mode, on_permission_prompt,
+        on_elicitation,
     )
     if not handled:
         acp_log('rpc', f'unhandled agent request: {method}')
@@ -1170,13 +1205,16 @@ async def send_prompt_and_stream(
     on_usage: Any | None = None,
     show_tool_calls: bool = True,
     on_session_info: Any | None = None,
+    on_elicitation: Any | None = None,
 ) -> str:
     """Send a ``session/prompt`` and stream the response.
 
     Installs temporary notification and request callbacks on *conn* to stream
     agent message and thought chunks through *callback*, resolve agent
     permission prompts (auto-allow/auto-reject or *on_permission_prompt*),
-    and service synchronous ``fs/*`` requests against *workspace_root*. The
+    resolve ``elicitation/create`` form questions via *on_elicitation*
+    (cancelled when absent, as in one-shot mode), and service synchronous
+    ``fs/*`` requests against *workspace_root*. The
     fs methods are permission-gated (kinds ``read_file`` / ``write_file``)
     and denied with a JSON-RPC error when not allowed. The callbacks are
     restored before returning.
@@ -1215,6 +1253,9 @@ async def send_prompt_and_stream(
         show_tool_calls: When ``True`` (default), render each tool call that
             reaches a terminal status as a single-line markdown bullet in the
             stream. When ``False``, tool calls are not rendered.
+        on_elicitation: Optional callable returning the elicitation result
+            dict for ``elicitation/create`` form requests. Absent means
+            cancel every question.
 
     Returns:
         A status string describing the outcome of the prompt: ``PROMPT_OK``
@@ -1239,6 +1280,7 @@ async def send_prompt_and_stream(
         await _handle_stream_request(
             conn, msg_id, method, params,
             ws_root, permissions_config, mode, on_permission_prompt,
+            on_elicitation,
         )
 
     prompt_blocks: list[dict[str, str]] = []
