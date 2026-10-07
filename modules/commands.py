@@ -1186,8 +1186,13 @@ class AcpInterruptCommand(sublime_plugin.WindowCommand):
     """Interrupt the current agent prompt without stopping the daemon."""
 
     def is_enabled(self):
-        """Enable whenever a daemon is running in this window."""
-        return _daemon_running(self.window.id())
+        """Enable only while a daemon prompt is in progress."""
+        state = get_state(self.window.id())
+        return state is not None and state.is_running() and bool(state.get('is_busy'))
+
+    def is_visible(self):
+        """Show only while a daemon prompt is in progress."""
+        return self.is_enabled()
 
     def run(self):
         """Interrupt the current agent prompt without stopping the daemon."""

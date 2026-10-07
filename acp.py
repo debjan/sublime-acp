@@ -1,8 +1,17 @@
 """ACP Sublime Text plugin - thin facade."""
 
+from __future__ import annotations
+
 import os
+import sys
 
 import sublime_plugin
+
+# Sublime only reloads this top-level module on Package Control upgrade, so without
+# this `from .modules.commands import ...` below would bind names from the stale cached
+# pre-upgrade submodules and fail with ImportError on every new command class.
+for _mod in [m for m in sys.modules if m != __name__ and m.startswith(f'{__package__}.')]:
+    del sys.modules[_mod]
 
 from .modules import file_walker
 from .modules.commands import (

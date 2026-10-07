@@ -531,7 +531,11 @@ async def _handle_init_phase(
         agent_caps = result.get('agentCapabilities', {})
         acp_log('rpc', '_handle_init_phase: initialize succeeded')
 
-        if auth_methods := result.get('authMethods', []):
+        auth_methods = [
+            m for m in result.get('authMethods', []) or []
+            if isinstance(m, dict) and m.get('type', 'agent') != 'terminal'
+        ]
+        if auth_methods:
             if auth is False:
                 acp_log('rpc', '_handle_init_phase: auth=False, skipping authentication')
             else:
@@ -540,6 +544,8 @@ async def _handle_init_phase(
                     'methodId': auth_methods[0]['id'],
                 })
                 acp_log('rpc', '_handle_init_phase: authentication done')
+        elif result.get('authMethods'):
+            acp_log('rpc', '_handle_init_phase: skipping terminal-only authMethods')
 
         acp_log('rpc', f'_handle_init_phase: resolving session (session_id={session_id})')
         resolved_session_id, opened_via, config_options, session_error = await resolve_session(
