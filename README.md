@@ -21,18 +21,18 @@ For manual installation clone or copy this package into your Sublime Text `Packa
 
 ### Persistent chat session (daemon)
 
-1. `Ctrl+Shift+P` -> **"ACP: Start Session"**
+1. `Ctrl+Shift+P` -> **"ACP: Session Start"**
 2. Pick an agent - a spinner shows while the agent initializes
 3. Once ready, a dedicated **"ACP Chat: Agent Name"** tab opens
 4. Send prompts via **"ACP: Prompt"** - responses accumulate in the chat tab
-5. Stop the session with **"ACP: Stop Session"**
+5. Stop the session with **"ACP: Session Stop"**
 
 The daemon auto-terminates after 15 minutes of inactivity (configurable).
 
 ### Switch sessions mid-session
 
 - `Ctrl+Shift+P` -> **"ACP: Switch Session"** - while a daemon is running, pick from the agent's recent sessions (via `session/list` on the live connection, filtered by the current working directory, capped by `session_list_limit`) and switch the daemon to it.
-- `Ctrl+Shift+P` -> **"ACP: Rename Session"** - set a title for the current session. Title is stored client-side and shown in **"ACP: Switch Session"**. Leave the field empty to clear it.
+- `Ctrl+Shift+P` -> **"ACP: Session Rename"** - set a title for the current session. Title is stored client-side and shown in **"ACP: Switch Session"**. Leave the field empty to clear it.
 
 ### Walkthrough
 
@@ -65,18 +65,20 @@ For available options see [configuration.md](docs/configuration.md).
 
 ## Commands
 
-| Palette Command               | Keybinding         | Description                                   |
-| ----------------------------- | ------------------ | --------------------------------------------- |
-| ACP: Start Session            | `Ctrl+Alt+A`       | Start a persistent agent daemon               |
-| ACP: Stop Session             | `Ctrl+Alt+Shift+A` | Terminate the running daemon                  |
-| ACP: Send Prompt              | `Alt+Shift+A`      | One-shot prompt (or send to daemon)           |
-| ACP: Interrupt Current Prompt | `Ctrl+Break`       | Cancel the in-flight prompt (daemon only)     |
-| ACP: Rename Session           | -                  | Set a local title for the current session     |
-| ACP: Switch Session           | -                  | Switch the running daemon to a recent session |
-| ACP: Fork Session             | -                  | Fork the current session                      |
-| ACP: Switch Model             | -                  | Change model mid-session                      |
-| ACP: Switch Mode              | -                  | Change session mode mid-session               |
-| ACP: Switch Thought Level     | -                  | Change reasoning effort mid-session           |
+| Palette Command               | Keybinding         | Description                                     |
+| ----------------------------- | ------------------ | ----------------------------------------------- |
+| ACP: Prompt                   | `Alt+Shift+A`      | One-shot prompt (or send to daemon)             |
+| ACP: Session Start            | `Ctrl+Alt+A`       | Start a persistent agent daemon                 |
+| ACP: Session Stop             | `Ctrl+Alt+Shift+A` | Terminate the running daemon                    |
+| ACP: Interrupt Current Prompt | `Ctrl+Break`       | Cancel the in-flight prompt (daemon only)       |
+| ACP: Actions                  | -                  | Run a quick action on the selected text         |
+| ACP: Session Rename           | -                  | Set a local title for the current session       |
+| ACP: Switch Session           | -                  | Switch the running daemon to a recent session   |
+| ACP: Session Fork             | -                  | Fork the current session                        |
+| ACP: Switch Model             | -                  | Change model mid-session                        |
+| ACP: Switch Mode              | -                  | Change session mode mid-session                 |
+| ACP: Switch Thought Level     | -                  | Change reasoning effort mid-session             |
+| ACP: Send manual request      | -                  | Send a raw ACP method (debug mode, daemon only) |
 
 To enable keyboard shortcut open "Preferences -> Package Settings -> ACP -> Example Key Bindings".
 
