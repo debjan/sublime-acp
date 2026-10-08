@@ -72,13 +72,12 @@ For available options see [configuration.md](docs/configuration.md).
 | ACP: Session Stop             | `Ctrl+Alt+Shift+A` | Terminate the running daemon                    |
 | ACP: Interrupt Current Prompt | `Ctrl+Break`       | Cancel the in-flight prompt (daemon only)       |
 | ACP: Actions                  | -                  | Run a quick action on the selected text         |
-| ACP: Session Rename           | -                  | Set a local title for the current session       |
-| ACP: Switch Session           | -                  | Switch the running daemon to a recent session   |
 | ACP: Session Fork             | -                  | Fork the current session                        |
-| ACP: Switch Model             | -                  | Change model mid-session                        |
+| ACP: Session Rename           | -                  | Set a local title for the current session       |
 | ACP: Switch Mode              | -                  | Change session mode mid-session                 |
+| ACP: Switch Model             | -                  | Change model mid-session                        |
+| ACP: Switch Session           | -                  | Switch the running daemon to a recent session   |
 | ACP: Switch Thought Level     | -                  | Change reasoning effort mid-session             |
-| ACP: Send manual request      | -                  | Send a raw ACP method (debug mode, daemon only) |
 
 To enable keyboard shortcut open "Preferences -> Package Settings -> ACP -> Example Key Bindings".
 
