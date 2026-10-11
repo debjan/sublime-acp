@@ -44,6 +44,8 @@ PROMPT_CANCELLED = 'cancelled'
 _ACP_TIMEOUT = (ACPError, *TIMEOUT_EXCEPTIONS)
 _ACP_TRANSPORT = (ACPError, *TIMEOUT_EXCEPTIONS, ConnectionError)
 
+CLIENT_VERSION = '0.1.0'
+
 _INITIALIZE_PARAMS = {
     'protocolVersion': PROTOCOL_VERSION,
     'clientCapabilities': {
@@ -55,7 +57,7 @@ _INITIALIZE_PARAMS = {
             'form': {},
         },
     },
-    'clientInfo': {'name': 'sublime-acp', 'version': '1.0.0'},
+    'clientInfo': {'name': 'sublime-acp', 'version': CLIENT_VERSION},
 }
 
 _FS_ALLOW_OPTION_ID = 'allow'
@@ -90,7 +92,11 @@ def _validate_workspace_path(workspace_root: str, path_str: str) -> Path | None:
     """Resolve a path relative to the workspace root and confine it there."""
     try:
         ws_root = Path(workspace_root).resolve()
-        file_path = (ws_root / path_str.lstrip('/')).resolve()
+        candidate = Path(path_str)
+        if candidate.is_absolute():
+            file_path = candidate.resolve()
+        else:
+            file_path = (ws_root / path_str).resolve()
     except Exception:
         return None
 
@@ -120,7 +126,7 @@ def _read_file_range(file_path: Path, line: int | None, limit: int | None) -> st
 
 def _write_file_sync(file_path: Path, content: str) -> None:
     """Synchronous helper: atomically write a file (runs in executor)."""
-    temp_path = file_path.with_suffix(file_path.suffix + '.tmp')
+    temp_path = file_path.with_name(f'{file_path.name}.tmp.{os.getpid()}')
     committed = False
     try:
         file_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1114,8 +1120,8 @@ async def _handle_stream_request(
     )
     if not handled:
         acp_log('rpc', f'unhandled agent request: {method}')
-        if method == 'terminal/create':
-            await conn.respond_with_error(msg_id, -32601, 'Terminal not supported')
+        if method.startswith('terminal/'):
+            await conn.respond_with_error(msg_id, -32601, f'{method} not supported')
 
 
 def _format_agent_error(exc: ACPError) -> str:

@@ -882,7 +882,7 @@ class AcpStopCommand(sublime_plugin.WindowCommand):
 
 
 class _AcpSwitchConfigOptionCommand(sublime_plugin.WindowCommand):
-    """Base for commands that switch a ``session/set_config_option`` value.
+    """Base for Model/Mode/Thought Level switch commands.
 
     Subclasses set :attr:`config_id` (the option identifier) and
     :attr:`label` (used in status-bar messages and the quick-panel placeholder).
@@ -946,8 +946,16 @@ class _AcpSwitchConfigOptionCommand(sublime_plugin.WindowCommand):
             if input_view is not None and input_view.window() is not None:
                 self.window.focus_view(input_view)
 
+    def _request_spec(self, session_id: str, config_id: str, value: str) -> tuple[str, dict]:
+        """Return ``(method, params)`` for applying *value* to *config_id*."""
+        return 'session/set_config_option', {
+            'sessionId': session_id,
+            'configId': config_id,
+            'value': value,
+        }
+
     def _apply_option(self, config_id: str, value: str) -> None:
-        """Send ``session/set_config_option`` for :attr:`config_id` and update the cache."""
+        """Send the switch request for :attr:`config_id` and update the cache."""
         state = get_state(self.window.id())
         if state is None or not state.is_running():
             sublime.status_message('ACP: No daemon running')
@@ -974,11 +982,8 @@ class _AcpSwitchConfigOptionCommand(sublime_plugin.WindowCommand):
                 acp_log('switch_config', f'skip {config_id} change: daemon busy', owner_id)
                 return
             try:
-                response = await conn.send_request('session/set_config_option', {
-                    'sessionId': session_id,
-                    'configId': config_id,
-                    'value': value,
-                })
+                method, params = self._request_spec(session_id, config_id, value)
+                response = await conn.send_request(method, params)
                 _handle_success(response, session_id)
             except Exception as exc:
                 failed = exc
@@ -1012,11 +1017,8 @@ class _AcpSwitchConfigOptionCommand(sublime_plugin.WindowCommand):
                 return
 
             async def _retry():
-                return await conn2.send_request('session/set_config_option', {
-                    'sessionId': sid2,
-                    'configId': config_id,
-                    'value': value,
-                })
+                method, params = self._request_spec(sid2, config_id, value)
+                return await conn2.send_request(method, params)
 
             try:
                 future2 = asyncio.run_coroutine_threadsafe(_retry(), loop2)
@@ -1173,6 +1175,13 @@ class AcpSwitchModeCommand(_AcpSwitchConfigOptionCommand):
 
     config_id = 'mode'
     label = 'Mode'
+
+    def _request_spec(self, session_id: str, config_id: str, value: str) -> tuple[str, dict]:
+        """Return a ``session/set_mode`` request (modes use ``modeId``)."""
+        return 'session/set_mode', {
+            'sessionId': session_id,
+            'modeId': value,
+        }
 
 
 class AcpSwitchThoughtLevelCommand(_AcpSwitchConfigOptionCommand):

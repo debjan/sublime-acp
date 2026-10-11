@@ -33,7 +33,7 @@ ACP adopts the JSON-RPC 2.0 standard codes and adds its own in the reserved rang
 | -------- | ------------------------------------------- | ------------------------------------------------------------------------------------------------ |
 | `-32000` | `modules/rpc.py` (`_check_fs_permission`)   | A read/write file operation was denied by the permission system                                  |
 | `-32602` | `modules/rpc.py` (fs handlers)              | Invalid fs params (`line`/`limit` not a positive int), path outside workspace, or file not found |
-| `-32601` | `modules/rpc.py` (`send_prompt_and_stream`) | The agent issued an unsupported request (e.g. `terminal/create`)                                 |
+| `-32601` | `modules/rpc.py` (`send_prompt_and_stream`) | The agent issued an unsupported request (e.g. any `terminal/*`)                                  |
 
 ## How failures surface
 
@@ -49,3 +49,10 @@ ACP adopts the JSON-RPC 2.0 standard codes and adds its own in the reserved rang
 | `PROMPT_CANCELLED`         | The prompt was cancelled (`session/cancel`)             |
 
 The daemon's prompt loop (`modules/daemon.py`) treats `PROMPT_SESSION_NOT_FOUND` and `PROMPT_CONNECTION_CLOSED` as a stale session/process and automatically reconnects: it closes the dead connection, spawns a fresh subprocess, and resumes the same session id (falling back to a new session if resume fails). All other statuses are surfaced to the output view as-is and the daemon keeps running.
+
+## Switch commands
+
+**ACP: Switch Model** and **ACP: Switch Thought Level** send
+`session/set_config_option`; **ACP: Switch Mode** sends `session/set_mode`
+with `modeId`. An agent without mode support answers `-32601`, surfaced as
+`ACP: Failed to set mode: ...` with the daemon left running.
