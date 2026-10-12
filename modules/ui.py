@@ -7,8 +7,9 @@ from typing import Any, Callable
 
 import sublime
 
+from ..protocol import acp_log
 from . import broadcast
-from .config import STATUS_KEY_DAEMON, TURN_DIVIDER, settings
+from .config import SESSION_PROMPT, STATUS_KEY_DAEMON, TURN_DIVIDER, settings
 
 
 def dividers_enabled() -> bool:
@@ -70,10 +71,8 @@ def get_one_shot_view(window: sublime.Window, agent_name: str = '',
     newly created views are moved into the output split.
     """
     view = _one_shot_views.get(window.id())
-    if (
-        view is not None and view.is_valid()
-        and view.window() is not None and view.window().id() == window.id()
-    ):
+    owner = view.window() if view is not None and view.is_valid() else None
+    if view is not None and owner is not None and owner.id() == window.id():
         window.focus_view(view)
         return view
     view = create_output_view(window, agent_name, role=role)
@@ -216,8 +215,6 @@ def make_stream_callback(
     Returns:
         A callable ``(text: str) -> None`` suitable as ``rpc.acp``'s callback.
     """
-    from .daemon import DaemonState
-
     def _on_chunk(text: str) -> None:
         if state is not None:
             has_replied = state.get('has_replied')
@@ -264,8 +261,8 @@ def replace_output_view(view: sublime.View, text: str) -> None:
             view.run_command('select_all')
             view.run_command('left_delete')
             _append_text(view, text)
-        except Exception:
-            pass  # view was destroyed during shutdown
+        except Exception as exc:
+            acp_log('ui', f'replace output view failed: {exc!r}')
 
     on_main(_replace)
 
@@ -291,7 +288,7 @@ def append_prompt_turn(view: sublime.View, prompt: str,
             append_to_output_view(view, f'{sel_display}\n{divider}')
 
 
-def _window_by_id(window_id):
+def window_by_id(window_id):
     """Return the open window matching *window_id*, or ``None``."""
     if not isinstance(window_id, int):
         return None
@@ -299,6 +296,70 @@ def _window_by_id(window_id):
         if w.id() == window_id:
             return w
     return None
+
+
+def truncate_middle(text: str, max_chars: int = 160) -> str:
+    """Shorten long text to fit the quick panel, keeping head and tail."""
+    text = ' '.join(str(text).split())
+    if len(text) <= max_chars:
+        return text
+    keep = max_chars - 1
+    head = keep * 2 // 3
+    return text[:head] + '…' + text[len(text) - (keep - head):]
+
+
+def format_local_time(value: Any) -> str | None:
+    """Convert an ACP UTC timestamp to local time for display, or ``None``."""
+    if value is None or value == '':
+        return None
+    try:
+        from datetime import datetime, timezone
+        if isinstance(value, (int, float)):
+            ts = value / 1000.0 if value > 1e11 else float(value)
+            return datetime.fromtimestamp(ts, tz=timezone.utc).astimezone().strftime('%Y-%m-%d %H:%M')
+        text = str(value).strip().replace('Z', '+00:00')
+        if not text:
+            return None
+        dt = datetime.fromisoformat(text)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone().strftime('%Y-%m-%d %H:%M')
+    except (ValueError, OverflowError, OSError):
+        pass
+    return str(value)
+
+
+def display_session_title(session: dict) -> str:
+    """Return a session title, falling back to the full session ID.
+
+    A local override set via ``ACP: Rename Session`` is explicit user intent,
+    so it wins. Otherwise the agent's ``title`` is used, unless it is a
+    verbatim echo of :data:`~modules.config.SESSION_PROMPT`. The session ID is
+    the final fallback.
+    """
+    if override := (session.get('title_override') or '').strip():
+        return override
+    if title := (session.get('title') or '').strip():
+        normalized_title = ' '.join(title.split())
+        prompt_head = ' '.join(SESSION_PROMPT.split())
+        is_echo = (
+            normalized_title.startswith(prompt_head[:40])
+            or prompt_head[:60] in normalized_title
+        )
+        if not is_echo:
+            return title
+    return session.get('sessionId', 'untitled') or 'untitled'
+
+
+def session_row(session: dict, current: str | None) -> tuple[str, str, bool]:
+    """Return ``(title, detail, is_current)`` for a session picker row."""
+    title = display_session_title(session)
+    sid = session.get('sessionId', '')
+    updated = format_local_time(session.get('updatedAt'))
+    detail = sid if len(sid) <= 32 else f'…{sid[-16:]}'
+    if updated:
+        detail = f'{updated} · {detail}'
+    return title, detail, bool(sid) and sid == current
 
 
 def reopen_daemon_input_panel(cmd, model, timeout, session_prompt, session_id, agent_name, daemon_window=None, env=None, auth=None, daemon_window_id=None):
@@ -331,7 +392,7 @@ def reopen_daemon_input_panel(cmd, model, timeout, session_prompt, session_id, a
         return  # owning view/window gone - never fall back to another window
     if owner_id is None:
         return
-    window = _window_by_id(owner_id)
+    window = window_by_id(owner_id)
     if window is None:
         return  # owning window closed - never fall back to another window
     if window is not None:

@@ -49,8 +49,8 @@ async def _pump_stderr(proc) -> None:
                 break
             if text := line.decode('utf-8', 'replace').rstrip():
                 acp_log('agent-stderr', f'[pid={proc.pid}] {text}')
-    except (asyncio.CancelledError, Exception):
-        pass
+    except (asyncio.CancelledError, Exception) as exc:
+        acp_log('transports', f'stderr pump ended: {exc!r}')
 
 
 def _start_stderr_pump(proc) -> None:

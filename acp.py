@@ -1,11 +1,14 @@
 """ACP Sublime Text plugin - thin facade."""
 
+# ruff:noqa: F401 - command classes register with Sublime on import (side effects).
 from __future__ import annotations
 
 import os
 import sys
 
 import sublime_plugin
+
+from .protocol import acp_log
 
 # Sublime only reloads this top-level module on Package Control upgrade, so without
 # this `from .modules.commands import ...` below would bind names from the stale cached
@@ -17,22 +20,26 @@ from .modules import file_walker
 from .modules.commands import (
     AcpActionsCommand,
     AcpCommand,
-    AcpForkSessionCommand,
     AcpInputCommand,
     AcpInterruptCommand,
+    AcpStartCommand,
+    AcpStopCommand,
+    AcpWindowCleanupListener,
+)
+from .modules.commands_manual import (
     AcpManualParamsCancelCommand,
     AcpManualParamsListener,
     AcpManualParamsSetTextCommand,
     AcpManualParamsSubmitCommand,
-    AcpRenameSessionCommand,
     AcpSendManualRequestCommand,
-    AcpStartCommand,
-    AcpStopCommand,
+)
+from .modules.commands_switch import (
+    AcpForkSessionCommand,
+    AcpRenameSessionCommand,
     AcpSwitchModeCommand,
     AcpSwitchModelCommand,
     AcpSwitchSessionCommand,
     AcpSwitchThoughtLevelCommand,
-    AcpWindowCleanupListener,
 )
 from .modules.completions import AcpFileCompletionListener
 from .modules.config import STATUS_KEY_DAEMON, STATUS_KEY_USAGE, settings
@@ -78,14 +85,14 @@ def plugin_unloaded():
         from .modules.debug_panel import clear_panel_cache
 
         clear_panel_cache()
-    except Exception:
-        pass
+    except Exception as exc:
+        acp_log('unload', f'clear_panel_cache failed: {exc!r}')
     try:
         from .modules.broadcast import erase_broadcast_status
         erase_broadcast_status(STATUS_KEY_DAEMON)
         erase_broadcast_status(STATUS_KEY_USAGE)
-    except Exception:
-        pass
+    except Exception as exc:
+        acp_log('unload', f'erase_broadcast_status failed: {exc!r}')
     file_walker.clear_all_caches()
 
 

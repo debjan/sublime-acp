@@ -114,19 +114,6 @@ def _resolve_auto_permission(
     return outcome
 
 
-_TRUNCATE_MAX_CHARS = 160
-
-
-def _truncate_middle(text: str, max_chars: int = _TRUNCATE_MAX_CHARS) -> str:
-    """Shorten long text to fit the quick panel, keeping head and tail."""
-    text = ' '.join(str(text).split())
-    if len(text) <= max_chars:
-        return text
-    keep = max_chars - 1
-    head = keep * 2 // 3
-    return text[:head] + '…' + text[len(text) - (keep - head):]
-
-
 def _show_permission_prompt(params: dict, on_done: Callable, window_id: int) -> None:
     """Show a quick panel with permission options."""
     if window_id not in [w.id() for w in sublime.windows()]:
@@ -143,7 +130,8 @@ def _show_permission_prompt(params: dict, on_done: Callable, window_id: int) -> 
         on_done(None)
         return
 
-    short_title = _truncate_middle(title)
+    from . import broadcast
+    short_title = ui.truncate_middle(title)
     names = [
         o.get('name', o.get('optionId'))
         for o in options
@@ -160,7 +148,6 @@ def _show_permission_prompt(params: dict, on_done: Callable, window_id: int) -> 
             acp_log('permissions', f'user selected: index={index}, optionId={option_ids[index]!r}', window_id)
             on_done(option_ids[index])
 
-    from . import broadcast
     broadcast.flash_prompt(f'ACP: permission needed - {short_title}', window_id)
 
     quick_panel_item = getattr(sublime, 'QuickPanelItem', None)

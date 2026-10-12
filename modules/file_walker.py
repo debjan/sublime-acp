@@ -8,6 +8,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from ..protocol import acp_log
 from . import gitignore, ui
 from .config import CACHE_TTL_DEFAULT
 
@@ -163,7 +164,9 @@ class ProjectFileCache:
                     cb(project_files)
 
             ui.on_main(update_cache)
-        except Exception:
+        except Exception as exc:
+            acp_log('file_walker', f'background walk failed: {exc!r}')
+
             def clear_flag():
                 with self._lock:
                     self._refresh_in_progress.discard(window_id)

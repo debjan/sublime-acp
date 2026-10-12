@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
-from typing import Any, AsyncIterator, Callable
+from typing import Any, AsyncGenerator, Callable
 
 from .compat import TIMEOUT_EXCEPTIONS, loop_time
 from .log import acp_log
@@ -265,7 +265,7 @@ class Connection:
         self,
         notification_callback: Callable[[str, dict[str, Any]], Any] | None,
         request_callback: Callable[[int, str, dict[str, Any]], Any] | None,
-    ) -> AsyncIterator[None]:
+    ) -> AsyncGenerator[None, None]:
         """Temporarily replace notification and request callbacks.
 
         Saves the current callbacks, installs *notification_callback* and

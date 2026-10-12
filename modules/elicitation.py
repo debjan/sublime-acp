@@ -34,16 +34,6 @@ def invalidate_elicit_lock(window_id: int) -> None:
     _elicit_lock_loops.pop(window_id, None)
 
 
-def _truncate_middle(text: str, max_chars: int = 160) -> str:
-    """Shorten long text to fit the quick panel, keeping head and tail."""
-    text = ' '.join(str(text).split())
-    if len(text) <= max_chars:
-        return text
-    keep = max_chars - 1
-    head = keep * 2 // 3
-    return text[:head] + '…' + text[len(text) - (keep - head):]
-
-
 def dismiss_elicitation_prompt(window_id: int) -> None:
     """Dismiss any open elicitation panel for a window."""
     def _dismiss():
@@ -139,7 +129,7 @@ async def _ask_choice(window_id: int, caption: str, options: list[tuple[Any, str
         for i, (_, label, desc) in enumerate(options):
             if default is not None and options[i][0] == default:
                 selected = i
-            short = _truncate_middle(desc) if desc else _truncate_middle(caption)
+            short = ui.truncate_middle(desc) if desc else ui.truncate_middle(caption)
             if quick_panel_item is not None:
                 quick_items.append(quick_panel_item(label, details=short))
             else:
@@ -148,7 +138,7 @@ async def _ask_choice(window_id: int, caption: str, options: list[tuple[Any, str
 
         try:
             ui.on_main(
-                lambda: _show_choice(window_id, _truncate_middle(caption), labels, selected, _on_done),
+                lambda: _show_choice(window_id, ui.truncate_middle(caption), labels, selected, _on_done),
             )
             if remaining is not None:
                 await asyncio.wait_for(event.wait(), remaining)
@@ -201,7 +191,7 @@ async def _ask_text(window_id: int, caption: str, initial: str,
         try:
             ui.on_main(
                 lambda: _show_input(
-                    window_id, _truncate_middle(caption), initial,
+                    window_id, ui.truncate_middle(caption), initial,
                     lambda text: _finish(text), lambda: _finish(_CANCELLED),
                 ),
             )

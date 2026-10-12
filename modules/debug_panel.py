@@ -7,6 +7,8 @@ from typing import Callable
 import sublime
 import sublime_plugin
 
+from ..protocol import acp_log
+
 DEBUG_PANEL_NAME = 'ACP Log Panel'
 DEBUG_SYNTAX = 'Packages/ACP/syntaxes/ACPLog.sublime-syntax'
 
@@ -76,8 +78,8 @@ def _append_to_panel(window: sublime.Window, text: str) -> None:
     try:
         panel = ensure_debug_panel(window)
         panel.run_command('acp_update_log_panel', {'characters': text})
-    except Exception:
-        pass
+    except Exception as exc:
+        acp_log('debug_panel', f'append to panel failed: {exc!r}')
 
 
 def enqueue_debug_line(line: str, window_id: int | None = None) -> None:
@@ -116,8 +118,8 @@ def destroy_window_log(window_id: int) -> None:
                 window.run_command('hide_panel', {'cancel': True})
             window.destroy_output_panel(DEBUG_PANEL_NAME)
             _configured_windows.discard(window_id)
-        except Exception:
-            pass
+        except Exception as exc:
+            acp_log('debug_panel', f'destroy window log failed: {exc!r}')
 
     sublime.set_timeout(_destroy, 0)
 
@@ -131,8 +133,6 @@ def clear_window_log(window_id: int) -> None:
     out to all windows. Main thread only; no-ops if the panel does
     not exist. Failures are logged instead of silently swallowed.
     """
-    from ..protocol.log import acp_log
-
     with _lock:
         kept = [(line, wid) for line, wid in _pending if wid != window_id]
         _pending.clear()
@@ -199,5 +199,5 @@ def _try_clear_undo_stack() -> None:
             panel = window.find_output_panel(DEBUG_PANEL_NAME)
             if panel is not None:
                 panel.clear_undo_stack()
-        except Exception:
-            pass
+        except Exception as exc:
+            acp_log('debug_panel', f'clear undo stack failed: {exc!r}')
