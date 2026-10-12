@@ -36,6 +36,8 @@ With more than one entry, a quick panel lets you pick; a single entry is auto-se
 | `attach_selection` | `false`     | Auto-attach current selection as context (`@path:line-line`)                                                                     |
 | `context_usage`    | `true`      | Show context token usage in the status bar (e.g. `ctx 27% (53k/200k)`)                                                           |
 | `git_turn_summary` | `"counts"`  | Turn-end git summary: `"diff"` (filenames + patches), `"counts"` (filenames + change counts), `false` (off). `true` = `"counts"` |
+| `turn_end_flash`   | `true`      | Demand OS attention (taskbar flash / banner, never focus steal) when an agent turn ends                                          |
+| `prompt_flash`     | `true`      | Demand OS attention for permission prompts and elicitation questions (they block the turn until answered)                        |
 | `actions`          | (see below) | Custom quick actions shown in the prompt panel                                                                                   |
 
 `actions` entries appear as ready-made prompts for selected text via the command palette -> *ACP: Actions*. The selected text is always embedded in an action prompt as a fenced code block, independent of the `attach_selection` setting:

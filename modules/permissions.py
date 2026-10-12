@@ -161,7 +161,7 @@ def _show_permission_prompt(params: dict, on_done: Callable, window_id: int) -> 
             on_done(option_ids[index])
 
     from . import broadcast
-    broadcast.flash_notify(f'ACP: permission needed - {short_title}', window_id)
+    broadcast.flash_prompt(f'ACP: permission needed - {short_title}', window_id)
 
     quick_panel_item = getattr(sublime, 'QuickPanelItem', None)
     if quick_panel_item is not None:

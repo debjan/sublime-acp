@@ -16,6 +16,16 @@ cache_lock = threading.RLock()
 
 _memo: dict[Path, tuple[float, int | None, dict]] = {}
 
+_MEMO_MAX_ENTRIES = 8
+
+
+def _memo_store(data_file: Path, value: tuple[float, int | None, dict]) -> None:
+    """Store a memo entry, evicting the stalest first when over the cap."""
+    _memo[data_file] = value
+    while len(_memo) > _MEMO_MAX_ENTRIES:
+        oldest = min(_memo.items(), key=lambda item: item[1][0])[0]
+        del _memo[oldest]
+
 
 def _agents_path(cache_dir: Path) -> Path:
     return cache_dir / 'agents.json'
@@ -80,11 +90,11 @@ def load_agents(cache_dir: Path, ttl: float = CACHE_TTL_DEFAULT) -> dict:
             except OSError:
                 unchanged = False
             if unchanged:
-                _memo[data_file] = (now, entry[1], entry[2])
+                _memo_store(data_file, (now, entry[1], entry[2]))
                 return copy.deepcopy(entry[2])
         data, mtime_ns = _parse_agents(data_file)
         if data:
-            _memo[data_file] = (now, mtime_ns, copy.deepcopy(data))
+            _memo_store(data_file, (now, mtime_ns, copy.deepcopy(data)))
         else:
             _memo.pop(data_file, None)
         return data
@@ -110,9 +120,9 @@ def save_agents(cache_dir: Path, data: dict) -> None:
             except OSError:
                 _memo.pop(data_file, None)
             else:
-                _memo[data_file] = (
+                _memo_store(data_file, (
                     time.monotonic(), mtime_ns, copy.deepcopy(data),
-                )
+                ))
         return
     temp_file = cache_dir / 'agents.json.tmp'
     try:
@@ -125,9 +135,9 @@ def save_agents(cache_dir: Path, data: dict) -> None:
             except OSError:
                 _memo.pop(data_file, None)
             else:
-                _memo[data_file] = (
+                _memo_store(data_file, (
                     time.monotonic(), mtime_ns, copy.deepcopy(data),
-                )
+                ))
     finally:
         if temp_file.exists():
             temp_file.unlink()

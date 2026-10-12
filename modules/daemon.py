@@ -511,6 +511,25 @@ def _apply_switched_config(cmd, result, replayed) -> None:
                 return
 
 
+def _notify_turn_end(agent_name: str, status: str, window_id: int | None) -> None:
+    """Flash turn-end notices for the owning window.
+
+    Always flashes the in-Sublime status bar; additionally demands OS
+    attention (taskbar/banner, never focus steal) unless `turn_end_flash`
+    is disabled. Thread-safe from the daemon loop. Unknown owners stay
+    silent instead of flashing the active window.
+    """
+    if not isinstance(window_id, int):
+        return
+    if status == PROMPT_OK:
+        text = f'ACP: {agent_name} replied'
+    else:
+        text = f'ACP: turn {status.replace("_", " ")}'
+    broadcast.flash_notify(text, window_id)
+    if load_settings().get('turn_end_flash', True):
+        broadcast.demand_attention(text, window_id)
+
+
 def _refresh_daemon_status(state) -> None:
     """Re-render the status bar so the model indicator matches the session."""
     window = _window_for_state(state)
@@ -928,8 +947,7 @@ def execute_prompt(
         settings: Sublime settings dictionary.
         auth: Optional authentication flag.
     """
-    output_view = ui.create_output_view(window, agent_name, role='daemon')
-    ui.open_split_for_output(window, output_view)
+    output_view = ui.get_one_shot_view(window, agent_name, role='daemon')
 
     work_dir = ui.resolve_work_dir(window, source_view)
 
@@ -1828,6 +1846,7 @@ def _daemon_thread_main(
                     prompt_msg_id=None,
                 )
                 owner_id = state.get('window_id')
+                _notify_turn_end(agent_name, ok, owner_id)
                 ui.on_main(
                     lambda ov=output_view, wid=owner_id: ui.reopen_daemon_input_panel(
                         cmd, model, timeout, session_prompt, state.get('session_id'),

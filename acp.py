@@ -32,6 +32,7 @@ from .modules.commands import (
     AcpSwitchModelCommand,
     AcpSwitchSessionCommand,
     AcpSwitchThoughtLevelCommand,
+    AcpWindowCleanupListener,
 )
 from .modules.completions import AcpFileCompletionListener
 from .modules.config import STATUS_KEY_DAEMON, STATUS_KEY_USAGE, settings

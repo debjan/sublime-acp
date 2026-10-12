@@ -1473,6 +1473,14 @@ class AcpManualParamsListener(sublime_plugin.EventListener):
         _manual_params_phantoms.pop(view.id(), None)
 
 
+class AcpWindowCleanupListener(sublime_plugin.EventListener):
+    """Drop per-window ephemeral state when a window closes."""
+
+    def on_pre_close_window(self, window):
+        _pending_drafts.pop(window.id(), None)
+        ui.forget_one_shot_view(window.id())
+
+
 class AcpSendManualRequestCommand(sublime_plugin.WindowCommand):
     """Send a raw ACP request for debugging (daemon-only)."""
 

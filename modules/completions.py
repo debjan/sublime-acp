@@ -19,6 +19,8 @@ from .permissions import dismiss_permission_prompt
 
 _INHIBIT = sublime.INHIBIT_WORD_COMPLETIONS | sublime.INHIBIT_EXPLICIT_COMPLETIONS
 
+_COMPLETION_LIMIT = 200
+
 
 def _find_trigger_and_prefix(view, pt, prefix):
     """Scan backwards from the prefix start to find a ``/`` or ``@`` trigger.
@@ -62,12 +64,24 @@ def _find_trigger_and_prefix(view, pt, prefix):
 
 
 def _build_completions(project_files, prefix):
-    """Filter *project_files* by *prefix* and return ``CompletionItem`` list."""
+    """Filter *project_files* by *prefix* and return ``CompletionItem`` list.
+
+    Prefix matches come before substring matches; the list is capped at
+    ``_COMPLETION_LIMIT`` items.
+    """
     if prefix:
         partial_lower = prefix.replace('\\', '/').lower()
-        files = [f for f in project_files if partial_lower in f.replace('\\', '/').lower()]
+        starts: list = []
+        subs: list = []
+        for f in project_files:
+            normalized = f.replace('\\', '/').lower()
+            if normalized.startswith(partial_lower):
+                starts.append(f)
+            elif partial_lower in normalized:
+                subs.append(f)
+        files = (starts + subs)[:_COMPLETION_LIMIT]
     else:
-        files = project_files
+        files = project_files[:_COMPLETION_LIMIT]
     items = []
     for f in files:
         try:
@@ -185,16 +199,20 @@ class AcpFileCompletionListener(sublime_plugin.EventListener):
             return
         agent_name = state.get('agent_name') or 'agent'
         if state.get('is_busy'):
-            view.set_status(STATUS_KEY_DAEMON, 'ACP: processing...')
+            text = 'ACP: processing...'
         else:
-            view.set_status(STATUS_KEY_DAEMON, broadcast.daemon_status_text(agent_name, state.get('agent_cmd')))
+            text = broadcast.daemon_status_text(agent_name, state.get('agent_cmd'))
+        if view.get_status(STATUS_KEY_DAEMON) != text:
+            view.set_status(STATUS_KEY_DAEMON, text)
         if settings().get('context_usage', True):
             s = state.get('usage_used', 'usage_size')
             if s['usage_used'] is not None and s['usage_size'] is not None:
-                view.set_status(STATUS_KEY_USAGE, broadcast.usage_status_text(s['usage_used'], s['usage_size']))
-            else:
+                usage_text = broadcast.usage_status_text(s['usage_used'], s['usage_size'])
+                if view.get_status(STATUS_KEY_USAGE) != usage_text:
+                    view.set_status(STATUS_KEY_USAGE, usage_text)
+            elif view.get_status(STATUS_KEY_USAGE):
                 view.erase_status(STATUS_KEY_USAGE)
-        else:
+        elif view.get_status(STATUS_KEY_USAGE):
             view.erase_status(STATUS_KEY_USAGE)
 
     def on_pre_close_window(self, window):

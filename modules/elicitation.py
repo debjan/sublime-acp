@@ -84,7 +84,7 @@ def _show_choice(window_id: int, caption: str, labels: list, selected: int,
         return
     window = sublime.Window(window_id)
     from . import broadcast
-    broadcast.flash_notify(f'ACP: question - {caption}', window_id)
+    broadcast.flash_prompt(f'ACP: question - {caption}', window_id)
     window.show_quick_panel(labels, on_done, selected_index=selected, placeholder=caption)
 
 
@@ -96,7 +96,7 @@ def _show_input(window_id: int, caption: str, initial: str,
         return
     window = sublime.Window(window_id)
     from . import broadcast
-    broadcast.flash_notify(f'ACP: input needed - {caption}', window_id)
+    broadcast.flash_prompt(f'ACP: input needed - {caption}', window_id)
     window.show_input_panel(caption, initial, on_done, None, on_cancel)
 
 

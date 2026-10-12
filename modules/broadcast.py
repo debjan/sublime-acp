@@ -2,23 +2,29 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import sublime
 
 from . import cache
-from .config import SPINNER_INTERVAL_MS, STATUS_KEY_DAEMON, STATUS_KEY_NOTIFY
+from .config import SPINNER_INTERVAL_MS, STATUS_KEY_DAEMON, STATUS_KEY_NOTIFY, settings
 
 
 def _broadcast_status(key, value, window=None):
-    """Set or erase a status bar key on every view in the given window."""
+    """Set or erase a status bar key on every view in the given window.
+
+    Writes are skipped when the view already shows *value*, so view
+    activation and spinner ticks do not churn the status bar.
+    """
     if window is None:
         window = sublime.active_window()
     if window:
         for v in window.views():
             if value is None:
-                v.erase_status(key)
-            else:
+                if v.get_status(key):
+                    v.erase_status(key)
+            elif v.get_status(key) != value:
                 v.set_status(key, value)
 
 
@@ -48,6 +54,103 @@ def flash_notify(text, window_id=None, timeout_ms=5000):
         sublime.set_timeout(lambda: erase_broadcast_status(STATUS_KEY_NOTIFY, window), timeout_ms)
 
     sublime.set_timeout(_show, 0)
+
+
+def flash_prompt(text, window_id=None) -> None:
+    """Signal an interactive prompt: status flash plus gated OS attention.
+
+    The status flash always fires; the OS leg (taskbar/banner, never
+    focus steal) honors the ``prompt_flash`` setting (default on).
+    Prompts block the agent turn until answered, so background windows
+    need the nudge. Main-thread safe from any thread.
+    """
+    flash_notify(text, window_id)
+    if settings().get('prompt_flash', True):
+        demand_attention(text, window_id)
+
+
+def demand_attention(text, window_id=None):
+    """Flash the OS taskbar/dock entry for the owning window (never steals focus).
+
+    Main-thread safe from any thread. No-op when the window is gone.
+    Windows flashes the taskbar button until foregrounded (``FlashWindowEx``);
+    macOS posts a Notification Center banner; Linux tries ``notify-send``.
+    """
+    def _signal():
+        window = None
+        if isinstance(window_id, int):
+            window = next((w for w in sublime.windows() if w.id() == window_id), None)
+        if window is None:
+            return
+        if sys.platform == 'win32':
+            _flash_taskbar_window(window)
+        elif sys.platform == 'darwin':
+            _notify_center('ACP', text)
+        else:
+            _notify_send('ACP', text)
+
+    sublime.set_timeout(_signal, 0)
+
+
+def _flash_taskbar_window(window) -> bool:
+    """Request a taskbar flash via ``FlashWindowEx``; True when requested."""
+    try:
+        import ctypes
+        hwnd = window.hwnd()
+    except Exception:
+        return False
+    if not hwnd:
+        return False
+
+    class _FlashInfo(ctypes.Structure):
+        _fields_ = [
+            ('cbSize', ctypes.c_uint),
+            ('hwnd', ctypes.c_void_p),
+            ('dwFlags', ctypes.c_uint),
+            ('uCount', ctypes.c_uint),
+            ('dwTimeout', ctypes.c_uint),
+        ]
+
+    info = _FlashInfo(ctypes.sizeof(_FlashInfo), hwnd, 0x3 | 0xC, 0, 0)
+    try:
+        return bool(ctypes.windll.user32.FlashWindowEx(ctypes.byref(info)))
+    except Exception:
+        return False
+
+
+def _notify_center(title, text) -> bool:
+    """Post a Notification Center banner via osascript; True when posted."""
+    import subprocess
+
+    def _quote(value):
+        return '"' + str(value).replace('\\', '\\\\').replace('"', '\\"') + '"'
+
+    script = f'display notification {_quote(text)} with title {_quote(title)}'
+    try:
+        subprocess.run(
+            ['osascript', '-e', script],
+            capture_output=True, check=False, timeout=5,
+        )
+    except Exception:
+        return False
+    return True
+
+
+def _notify_send(title, text) -> bool:
+    """Post a desktop notification via ``notify-send`` when available."""
+    import shutil
+    import subprocess
+
+    if shutil.which('notify-send') is None:
+        return False
+    try:
+        subprocess.run(
+            ['notify-send', str(title), str(text)],
+            capture_output=True, check=False, timeout=5,
+        )
+    except Exception:
+        return False
+    return True
 
 
 def _pretty_model_name(model: str | None) -> str:

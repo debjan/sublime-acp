@@ -111,6 +111,17 @@
     // so long-running multi-edit turns won't time out while the agent is working.
     "timeout": 600,
 
+    // Flash the OS taskbar / notification center when an agent turn ends,
+    // so background windows get noticed without stealing focus (Windows:
+    // taskbar flash until foregrounded; macOS: banner; Linux: notify-send).
+    // The in-Sublime status flash always fires regardless of this setting.
+    "turn_end_flash": true,
+
+    // Flash the OS taskbar / notification center for permission prompts and
+    // elicitation questions (same mechanism as above). Prompts block the agent
+    // turn until answered, so background windows need the nudge to get one.
+    "prompt_flash": true,
+
     // Hard cap in seconds for an open permission prompt: after this the prompt
     // is denied and the turn continues (0 = wait forever). Prompts are queued
     // per window, so back-to-back requests each get their own panel.

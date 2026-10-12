@@ -42,7 +42,7 @@ flowchart TD
   - `fs/write_text_file` -> kind `write_file`,
 so the same patterns cover both agent tools and direct host-fs access.
 - **Sensitive reads always prompt** - a read matching `sensitive_globs` skips auto-allow and prompts in daemon mode (denied in one-shot mode, where no UI exists).
-- **No focus stealing** - prompts never call `window.bring_to_front()`; a transient status-bar flash (`ACP: permission needed - ...`) marks the owning window instead.
+- **No focus stealing** - prompts never call `window.bring_to_front()`; a transient status-bar flash (`ACP: permission needed - ...`) plus gated OS attention (`prompt_flash`: taskbar/banner) marks the owning window instead.
 - **One-shot mode** - unmatched writes are denied (no UI available); in daemon mode they prompt instead.
 
 ## File walker (project files for `@` completions)

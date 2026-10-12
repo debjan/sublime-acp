@@ -59,6 +59,34 @@ def create_output_view(window: sublime.Window, agent_name: str = '',
     return view
 
 
+_one_shot_views: dict[int, sublime.View] = {}
+
+
+def get_one_shot_view(window: sublime.Window, agent_name: str = '',
+                      role: str = 'prompt') -> sublime.View:
+    """Return the last one-shot view for *window* if still open, else create one.
+
+    Reused views keep their layout position and simply gain focus; only
+    newly created views are moved into the output split.
+    """
+    view = _one_shot_views.get(window.id())
+    if (
+        view is not None and view.is_valid()
+        and view.window() is not None and view.window().id() == window.id()
+    ):
+        window.focus_view(view)
+        return view
+    view = create_output_view(window, agent_name, role=role)
+    _one_shot_views[window.id()] = view
+    open_split_for_output(window, view)
+    return view
+
+
+def forget_one_shot_view(window_id: int) -> None:
+    """Drop the remembered one-shot view for *window_id* (e.g. on close)."""
+    _one_shot_views.pop(window_id, None)
+
+
 def resolve_work_dir(window: sublime.Window, source_view: sublime.View) -> str:
     """Resolve the working directory for an ACP session.
 
@@ -85,19 +113,23 @@ def resolve_work_dir(window: sublime.Window, source_view: sublime.View) -> str:
     return str(work_dir) if work_dir is not None else '.'
 
 
+_MAX_ATTACH_SELECTIONS = 10
+
+
 def attach_selection_to_prompt(prompt: str, source_view: sublime.View,
                                force: bool = False) -> str:
-    """Append the current selection or cursor context to the prompt.
+    """Append the current selections or cursor context to the prompt.
 
     No-op when ``attach_selection`` is disabled in settings unless *force*
     is set. With *force* (quick-action prompts), always appends the raw
-    selected text in a code fence. Otherwise, if ``source_view`` has a
-    non-empty selection and a file name, appends ``@path:line-start-line-end``;
-    if no file name, appends the selected text in a code fence.
+    selected text in a code fence. Otherwise, if ``source_view`` has
+    non-empty selections and a file name, appends ``@path:line-start-line-end``
+    per selection; if no file name, appends the selected text in a code fence.
+    At most ``_MAX_ATTACH_SELECTIONS`` selections are attached.
 
     Args:
         prompt: The original prompt text.
-        source_view: The view whose selection to attach.
+        source_view: The view whose selections to attach.
         force: Bypass the ``attach_selection`` setting and embed the raw
             selection text.
 
@@ -108,19 +140,26 @@ def attach_selection_to_prompt(prompt: str, source_view: sublime.View,
         return prompt
     if not force and not settings().get('attach_selection', False):
         return prompt
-    region = source_view.sel()[0]
-    if region.empty():
+    regions = [r for r in source_view.sel() if not r.empty()]
+    if not regions:
         return prompt
-    if force:
-        selection = source_view.substr(region)
-        return f'{prompt}\n```\n{selection}\n```'
-    if path := source_view.file_name():
+    if force or not source_view.file_name():
+        blocks = '\n'.join(
+            f'```\n{source_view.substr(r)}\n```'
+            for r in regions[:_MAX_ATTACH_SELECTIONS]
+        )
+        return f'{prompt}\n{blocks}'
+    path = source_view.file_name()
+
+    def _ref(region) -> str:
         start = source_view.rowcol(region.begin())[0] + 1
         end = source_view.rowcol(region.end())[0] + 1
-        return f'{prompt} @{path}:{start}-{end}'
-    else:
-        selection = source_view.substr(region)
-        return f'{prompt}\n```\n{selection}\n```'
+        return f'@{path}:{start}-{end}'
+
+    refs = [_ref(r) for r in regions[:_MAX_ATTACH_SELECTIONS]]
+    if len(regions) > _MAX_ATTACH_SELECTIONS:
+        refs.append(f'(+{len(regions) - _MAX_ATTACH_SELECTIONS} more)')
+    return f'{prompt} {" ".join(refs)}'
 
 
 def open_split_for_output(window: sublime.Window, output_view: sublime.View) -> None:
