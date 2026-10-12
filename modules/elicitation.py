@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 from typing import Any, Callable
 
 import sublime
@@ -84,8 +83,8 @@ def _show_choice(window_id: int, caption: str, labels: list, selected: int,
         on_done(-1)
         return
     window = sublime.Window(window_id)
-    with contextlib.suppress(Exception):
-        window.bring_to_front()
+    from . import broadcast
+    broadcast.flash_notify(f'ACP: question - {caption}', window_id)
     window.show_quick_panel(labels, on_done, selected_index=selected, placeholder=caption)
 
 
@@ -96,8 +95,8 @@ def _show_input(window_id: int, caption: str, initial: str,
         on_cancel()
         return
     window = sublime.Window(window_id)
-    with contextlib.suppress(Exception):
-        window.bring_to_front()
+    from . import broadcast
+    broadcast.flash_notify(f'ACP: input needed - {caption}', window_id)
     window.show_input_panel(caption, initial, on_done, None, on_cancel)
 
 

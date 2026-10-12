@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import fnmatch
 from typing import Any, Callable
 
@@ -11,7 +10,11 @@ import sublime
 
 from ..protocol import TIMEOUT_EXCEPTIONS, acp_log
 from . import ui
-from .config import DEFAULT_PERMISSIONS, PERMISSION_PROMPT_TIMEOUT
+from .config import (
+    DEFAULT_PERMISSIONS,
+    DEFAULT_SENSITIVE_GLOBS,
+    PERMISSION_PROMPT_TIMEOUT,
+)
 
 # Per-window serialization of interactive prompts: Sublime allows only one
 # quick panel per window; concurrent show_quick_panel calls displace each
@@ -46,6 +49,35 @@ def invalidate_prompt_lock(window_id: int) -> None:
     _prompt_lock_loops.pop(window_id, None)
 
 
+def sensitive_globs(permissions_config: dict | None = None) -> list:
+    """Return the sensitive-file globs from *permissions_config* or defaults."""
+    if permissions_config is None:
+        permissions_config = DEFAULT_PERMISSIONS
+    globs = permissions_config.get('sensitive_globs', DEFAULT_SENSITIVE_GLOBS)
+    if isinstance(globs, (list, tuple)):
+        return list(globs)
+    return list(DEFAULT_SENSITIVE_GLOBS)
+
+
+def is_sensitive_path(path: str | None, globs: list | None = None) -> bool:
+    """Return whether *path* matches any sensitive-file glob.
+
+    Patterns match the basename (``.env``) as well as the full path, so
+    ``*key*`` also catches sensitive directories on the way in.
+    """
+    if not isinstance(path, str) or not path:
+        return False
+    if globs is None:
+        globs = DEFAULT_SENSITIVE_GLOBS
+    candidates = {path, path.replace('\\', '/')}
+    candidates.add(path.replace('\\', '/').rsplit('/', 1)[-1])
+    return any(
+        fnmatch.fnmatch(candidate, glob)
+        for candidate in candidates
+        for glob in globs
+    )
+
+
 def _resolve_auto_permission(
     params: dict[str, Any],
     permissions_config: dict | None = None,
@@ -67,10 +99,13 @@ def _resolve_auto_permission(
             outcome = ('cancelled', None)
             break
     else:
-        for pattern in auto_allow:
-            if fnmatch.fnmatch(tool_kind, pattern):
-                outcome = ('selected', options[0].get('optionId')) if options else ('selected', None)
-                break
+        if tool_call.get('sensitive'):
+            acp_log('permissions', f'sensitive {tool_kind!r} operation - forcing prompt', window_id)
+        else:
+            for pattern in auto_allow:
+                if fnmatch.fnmatch(tool_kind, pattern):
+                    outcome = ('selected', options[0].get('optionId')) if options else ('selected', None)
+                    break
     acp_log(
         'permissions',
         f'auto-{outcome[0]} for kind {tool_kind!r} (optionId={outcome[1]!r})',
@@ -125,8 +160,8 @@ def _show_permission_prompt(params: dict, on_done: Callable, window_id: int) -> 
             acp_log('permissions', f'user selected: index={index}, optionId={option_ids[index]!r}', window_id)
             on_done(option_ids[index])
 
-    with contextlib.suppress(Exception):
-        window.bring_to_front()
+    from . import broadcast
+    broadcast.flash_notify(f'ACP: permission needed - {short_title}', window_id)
 
     quick_panel_item = getattr(sublime, 'QuickPanelItem', None)
     if quick_panel_item is not None:

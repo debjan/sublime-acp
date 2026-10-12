@@ -91,11 +91,12 @@ Controls automatic approval/rejection of agent tool calls and host-filesystem op
 ```jsonc
 "permissions": {
     "auto_allow": ["read*"],
-    "auto_reject": []
+    "auto_reject": [],
+    "sensitive_globs": [".env", "*.pem", "*key*", "secrets.*"]
 }
 ```
 
-Patterns are fnmatch-style globs against tool kinds. `fs/read_text_file` maps to kind `read_file`; `fs/write_text_file` maps to kind `write_file`. Unmatched writes **prompt** in daemon mode but are **denied** in one-shot mode.
+Patterns are fnmatch-style globs against tool kinds. `fs/read_text_file` maps to kind `read_file`; `fs/write_text_file` maps to kind `write_file`. Unmatched writes **prompt** in daemon mode but are **denied** in one-shot mode. Reads matching `sensitive_globs` (basename or full path) always **prompt** in daemon mode and are **denied** in one-shot mode, even when `auto_allow` matches.
 
 ### Autocomplete file filtering
 

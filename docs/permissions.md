@@ -4,11 +4,11 @@ When an agent wants to use a tool (read a file, write a file, run a command), it
 
 ## Where the code lives
 
-| File                     | Responsibility                                                       |
-| ------------------------ | -------------------------------------------------------------------- |
-| `modules/permissions.py` | Full permission resolution pipeline                                  |
-| `ACP.sublime-settings`   | The `permissions` setting (`auto_allow`/`auto_reject`)               |
-| `modules/config.py`      | `DEFAULT_PERMISSIONS = {"auto_allow": ["read*"], "auto_reject": []}` |
+| File                     | Responsibility                                                           |
+| ------------------------ | ------------------------------------------------------------------------ |
+| `modules/permissions.py` | Full permission resolution pipeline                                      |
+| `ACP.sublime-settings`   | The `permissions` setting (`auto_allow`/`auto_reject`/`sensitive_globs`) |
+| `modules/config.py`      | `DEFAULT_PERMISSIONS` with `read*` allow and secret-file globs           |
 
 ## Resolution pipeline
 
@@ -16,7 +16,9 @@ When an agent wants to use a tool (read a file, write a file, run a command), it
 flowchart TD
     A[session/request_permission] --> B{matches auto_reject?}
     B -->|yes| C[rejected automatically]
-    B -->|no| D{matches auto_allow?}
+    B -->|no| S{sensitive file read?}
+    S -->|yes| F[quick panel prompt in owning window]
+    S -->|no| D{matches auto_allow?}
     D -->|yes| E[approved automatically]
     D -->|no| F[quick panel prompt in owning window]
     F -->|user picks option| G[selected]
@@ -24,8 +26,9 @@ flowchart TD
 ```
 
 1. **Auto-reject** - fnmatch-style glob patterns are checked first; a match rejects the request immediately.
-2. **Auto-allow** - same pattern matching; a match approves the request without any UI.
-3. **Interactive prompt** - otherwise a quick panel opens *in the window that owns the daemon* (the code uses the explicit `window_id`, not `sublime.active_window()`), listing the options the agent offered.
+2. **Sensitive files** - fs reads matching `sensitive_globs` (default `.env`, `*.pem`, `*key*`, `secrets.*`) always prompt, even under `read*` auto-allow.
+3. **Auto-allow** - same pattern matching; a match approves the request without any UI.
+4. **Interactive prompt** - otherwise a quick panel opens *in the window that owns the daemon* (the code uses the explicit `window_id`, not `sublime.active_window()`), listing the options the agent offered. The window is never forced to the front; a status-bar flash plus the panel placeholder signals the pending prompt instead.
 
 ## Key behaviors
 
@@ -38,6 +41,8 @@ flowchart TD
   - `fs/read_text_file` -> kind `read_file`,
   - `fs/write_text_file` -> kind `write_file`,
 so the same patterns cover both agent tools and direct host-fs access.
+- **Sensitive reads always prompt** - a read matching `sensitive_globs` skips auto-allow and prompts in daemon mode (denied in one-shot mode, where no UI exists).
+- **No focus stealing** - prompts never call `window.bring_to_front()`; a transient status-bar flash (`ACP: permission needed - ...`) marks the owning window instead.
 - **One-shot mode** - unmatched writes are denied (no UI available); in daemon mode they prompt instead.
 
 ## File walker (project files for `@` completions)

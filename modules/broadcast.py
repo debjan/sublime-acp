@@ -7,7 +7,7 @@ from pathlib import Path
 import sublime
 
 from . import cache
-from .config import SPINNER_INTERVAL_MS, STATUS_KEY_DAEMON
+from .config import SPINNER_INTERVAL_MS, STATUS_KEY_DAEMON, STATUS_KEY_NOTIFY
 
 
 def _broadcast_status(key, value, window=None):
@@ -30,6 +30,24 @@ def set_broadcast_status(key, text, window=None):
 def erase_broadcast_status(key, window=None):
     """Erase a status bar key from every view in the given window."""
     _broadcast_status(key, None, window)
+
+
+def flash_notify(text, window_id=None, timeout_ms=5000):
+    """Flash transient *text* in the status bar, auto-clearing after *timeout_ms*.
+
+    Main-thread safe from any thread (via ``sublime.set_timeout``); the
+    owning window is resolved late so background callers pass an id, never
+    a view. Used for permission/elicitation prompts instead of stealing
+    focus with ``window.bring_to_front()``.
+    """
+    def _show():
+        window = None
+        if isinstance(window_id, int):
+            window = next((w for w in sublime.windows() if w.id() == window_id), None)
+        set_broadcast_status(STATUS_KEY_NOTIFY, text, window)
+        sublime.set_timeout(lambda: erase_broadcast_status(STATUS_KEY_NOTIFY, window), timeout_ms)
+
+    sublime.set_timeout(_show, 0)
 
 
 def _pretty_model_name(model: str | None) -> str:

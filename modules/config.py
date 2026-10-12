@@ -26,7 +26,8 @@ MAX_HINT_LENGTH = 120              # max completion annotation chars (long hints
 
 TURN_DIVIDER = '\n\n---\n\n'  # markdown divider between turns
 
-DEFAULT_PERMISSIONS = {'auto_allow': ['read*'], 'auto_reject': []}  # default auto-allow / auto-reject rules
+DEFAULT_PERMISSIONS = {'auto_allow': ['read*'], 'auto_reject': [], 'sensitive_globs': ['.env', '*.pem', '*key*', 'secrets.*']}  # default auto-allow / auto-reject rules; sensitive reads always prompt
+DEFAULT_SENSITIVE_GLOBS = DEFAULT_PERMISSIONS['sensitive_globs']  # fnmatch globs (basename or full path) forcing a prompt for fs reads
 
 PROMPT = """
 - Keep explanations brief and separate from code. Use fenced code blocks with language identifiers. Place explanation after the code block.

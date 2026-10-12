@@ -564,9 +564,22 @@ def _finalize_daemon_connection(conn, cmd, init_result, on_usage=None, strict=Fa
     return session_id, agent_caps
 
 
+# Host environment names never inherited by agent subprocesses unless the
+# agent's own `env` setting lists them explicitly (compared case-insensitively).
+_ENV_SECRET_SUFFIXES = ('_TOKEN', '_SECRET', '_KEY')
+
+
 def _build_env(env: dict) -> dict:
-    """Build environment variables by merging with system environment."""
-    merged = os.environ.copy()
+    """Build environment variables by merging with the scrubbed system environment.
+
+    Host secrets (``*_TOKEN``, ``*_SECRET``, ``*_KEY``) are withheld unless
+    explicitly listed in *env*, in which case the explicit value wins.
+    """
+    explicit = {str(k).upper() for k in env} if env else set()
+    merged = {
+        k: v for k, v in os.environ.items()
+        if not k.upper().endswith(_ENV_SECRET_SUFFIXES) or k.upper() in explicit
+    }
     if env:
         merged.update(env)
     return merged

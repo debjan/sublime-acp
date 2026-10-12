@@ -25,7 +25,7 @@ from ..protocol import (
     resolve_session,
     spawn_subprocess,
 )
-from .permissions import resolve_permission
+from .permissions import is_sensitive_path, resolve_permission, sensitive_globs
 
 # Result statuses returned by ``send_prompt_and_stream``. ``PROMPT_OK`` means
 # the prompt completed; the others describe why it did not, so callers can
@@ -807,9 +807,19 @@ async def _check_fs_permission(
     permissions_config: dict | None,
     on_permission_prompt: Any | None,
 ) -> bool:
-    """Resolve permission for an fs operation and deny it when rejected."""
+    """Resolve permission for an fs operation and deny it when rejected.
+
+    Reads of sensitive files (see ``sensitive_globs``) are marked on the
+    synthesized ``toolCall`` so auto-allow can never approve them: they
+    prompt in daemon mode and are denied elsewhere.
+    """
+    perm_params = _make_fs_permission_params(tool_kind, title, params)
+    if tool_kind == 'read_file':
+        perm_params['toolCall']['sensitive'] = is_sensitive_path(
+            params.get('path', ''), sensitive_globs(permissions_config),
+        )
     opt_id = await _resolve_permission_id(
-        _make_fs_permission_params(tool_kind, title, params),
+        perm_params,
         permissions_config,
         on_permission_prompt,
     )
