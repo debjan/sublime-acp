@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+import threading
 from pathlib import Path
 
 import sublime
@@ -44,12 +45,15 @@ def flash_notify(text, window_id=None, timeout_ms=5000):
     Main-thread safe from any thread (via ``sublime.set_timeout``); the
     owning window is resolved late so background callers pass an id, never
     a view. Used for permission/elicitation prompts instead of stealing
-    focus with ``window.bring_to_front()``.
+    focus with ``window.bring_to_front()``. Unknown owners stay silent
+    instead of flashing the active window.
     """
     def _show():
         window = None
         if isinstance(window_id, int):
             window = next((w for w in sublime.windows() if w.id() == window_id), None)
+            if window is None:
+                return
         set_broadcast_status(STATUS_KEY_NOTIFY, text, window)
         sublime.set_timeout(lambda: erase_broadcast_status(STATUS_KEY_NOTIFY, window), timeout_ms)
 
@@ -75,6 +79,8 @@ def demand_attention(text, window_id=None):
     Main-thread safe from any thread. No-op when the window is gone.
     Windows flashes the taskbar button until foregrounded (``FlashWindowEx``);
     macOS posts a Notification Center banner; Linux tries ``notify-send``.
+    The macOS/Linux subprocess calls run off the UI thread so a slow
+    notification service cannot freeze the editor.
     """
     def _signal():
         window = None
@@ -85,9 +91,9 @@ def demand_attention(text, window_id=None):
         if sys.platform == 'win32':
             _flash_taskbar_window(window)
         elif sys.platform == 'darwin':
-            _notify_center('ACP', text)
+            threading.Thread(target=_notify_center, args=('ACP', text), daemon=True).start()
         else:
-            _notify_send('ACP', text)
+            threading.Thread(target=_notify_send, args=('ACP', text), daemon=True).start()
 
     sublime.set_timeout(_signal, 0)
 

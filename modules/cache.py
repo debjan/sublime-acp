@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+import shlex
 import threading
 import time
 from datetime import datetime
@@ -35,6 +36,11 @@ def agent_key(cmd: list | None) -> str | None:
     """Return the stable cache key for an agent command list."""
     if not cmd:
         return None
+    return shlex.join(str(part) for part in cmd)
+
+
+def _legacy_json_key(cmd: list) -> str:
+    """Return the pre-simplify cache key for *cmd* (for migration)."""
     return json.dumps([str(part) for part in cmd])
 
 
@@ -44,6 +50,10 @@ def get_entry(agents: dict, cmd: list | None) -> dict:
         return {}
     key = agent_key(cmd)
     if key in agents:
+        return agents.get(key) or {}
+    legacy_json = _legacy_json_key(cmd)
+    if legacy_json in agents and key is not None:
+        agents[key] = agents.pop(legacy_json)
         return agents.get(key) or {}
     legacy = cmd[0]
     if (
@@ -256,6 +266,7 @@ def clear_session_id(cache_dir: Path, cmd: list) -> None:
         legacy = cmd[0] if cmd else None
         if legacy != key:
             agents.pop(legacy, None)
+            agents.pop(_legacy_json_key(cmd), None)
         if not entry:
             agents.pop(key, None)
         save_agents(cache_dir, agents)
