@@ -69,6 +69,12 @@ def plugin_loaded():
     init_debug_panel()
     _apply_debug_setting()
     settings().add_on_change('acp_debug', _apply_debug_setting)
+    try:
+        from .modules.commands import prune_stale_agents
+
+        prune_stale_agents()
+    except Exception as exc:
+        acp_log('plugin_loaded', f'prune_stale_agents failed: {exc!r}')
 
 
 def _stop_all_daemons() -> None:

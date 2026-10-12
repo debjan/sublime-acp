@@ -67,6 +67,7 @@ def _pick_agent_command(window: sublime.Window, on_select: Callable) -> None:
     Calls ``on_select(cmd_item)`` on the main thread with the chosen command
     dict, or ``on_select(None)`` if the user cancels.
     """
+    prune_stale_agents()
     commands = settings().get('commands', [])
     if not commands:
         sublime.error_message('No predefined commands found in settings')
@@ -91,6 +92,28 @@ def _load_agents() -> dict:
         Path(sublime.cache_path()) / 'ACP',
         ttl=settings().get('cache_ttl', CACHE_TTL_DEFAULT),
     )
+
+
+def prune_stale_agents() -> bool:
+    """Drop cache entries for agents no longer in settings.
+
+    Main thread only: reads settings and takes ``cache_lock`` (background
+    threads must never touch settings under that lock). Returns ``True``
+    when entries were removed.
+    """
+    try:
+        allowed = cache.allowed_keys_for_commands(settings().get('commands') or [])
+        cache_dir = Path(sublime.cache_path()) / 'ACP'
+        with cache.cache_lock:
+            agents = cache.load_agents(
+                cache_dir, ttl=settings().get('cache_ttl', CACHE_TTL_DEFAULT),
+            )
+            if cache.prune_agents(agents, allowed):
+                cache.save_agents(cache_dir, agents)
+                return True
+    except Exception as exc:
+        acp_log('prune_agents', f'failed to prune stale agents: {exc!r}')
+    return False
 
 
 def _apply_title_overrides(cmd: list | None, sessions: list) -> None:

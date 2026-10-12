@@ -270,3 +270,30 @@ def clear_session_id(cache_dir: Path, cmd: list) -> None:
         if not entry:
             agents.pop(key, None)
         save_agents(cache_dir, agents)
+
+
+def allowed_keys_for_commands(commands: list | None) -> set[str]:
+    """Return current plus legacy cache keys for configured commands."""
+    keys: set[str] = set()
+    for item in commands or []:
+        if not isinstance(item, dict):
+            continue
+        cmd_str = item.get('cmd')
+        if not cmd_str:
+            continue
+        cmd = [cmd_str] + list(item.get('args') or [])
+        key = agent_key(cmd)
+        if key is not None:
+            keys.add(key)
+        keys.add(_legacy_json_key(cmd))
+        if len(cmd) == 1 and isinstance(cmd[0], str):
+            keys.add(cmd[0])
+    return keys
+
+
+def prune_agents(data: dict, allowed: set[str]) -> bool:
+    """Drop entries not in *allowed*; return ``True`` when anything was removed."""
+    stale = [k for k in data if k not in allowed]
+    for k in stale:
+        del data[k]
+    return bool(stale)
