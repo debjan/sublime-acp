@@ -92,6 +92,13 @@ class Connection:
         self._pending: dict[int, asyncio.Future] = {}
         self._reader_task: asyncio.Task | None = asyncio.ensure_future(self.read_loop())
         self._last_activity: float = loop_time()
+        # Per-request inactivity clocks, keyed by msg id (see send_request).
+        self._request_activity: dict[int, float] = {}
+        # Ids of in-flight requests whose clock agent notifications and
+        # requests refresh (streaming turns like session/prompt).
+        self._streaming: set[int] = set()
+        # Count of dispatched incoming messages (drain barrier for swap_callbacks).
+        self._dispatched: int = 0
 
         # Callbacks for unsolicited messages from the agent
         self.notification_callback: Callable[[str, dict[str, Any]], Any] | None = None
@@ -104,6 +111,8 @@ class Connection:
         method: str,
         params: dict[str, Any] | None = None,
         timeout: float = 60.0,
+        stream: bool = False,
+        on_request_sent: Callable[[int, str], Any] | None = None,
     ) -> Any:
         """Send a request and return the result (awaiting the response).
 
@@ -111,9 +120,17 @@ class Connection:
             method: The method name to invoke on the agent.
             params: Optional parameters for the request.
             timeout: Maximum seconds of inactivity to wait for the response.
-                The clock resets on every received message, so the request
-                only times out if the agent goes silent for *timeout* seconds.
-                Defaults to 60.0.
+                Each request has its own clock: a response completes its own
+                request, while agent notifications and requests refresh only
+                requests sent with *stream* set. Defaults to 60.0.
+            stream: When ``True``, agent notifications and requests (e.g.
+                ``session/update`` chunks during a prompt) reset this
+                request's inactivity clock. Use for ``session/prompt`` and
+                ``session/load`` replay; one-shot calls (``session/list``,
+                config changes) leave it ``False`` so a streaming prompt
+                cannot mask their silence, and vice versa.
+            on_request_sent: Optional ``(msg_id, method)`` hook invoked once
+                the request ID is assigned, e.g. to record the prompt ID.
 
         Returns:
             The result field from the agent's response.
@@ -123,31 +140,41 @@ class Connection:
                 inactivity window.
             ACPError: If the agent returns an error response.
         """
+        loop = asyncio.get_running_loop()
         msg_id = self._next_id
         self._next_id += 1
         self._last_request_id = msg_id
+        self._request_activity[msg_id] = loop.time()
+        if stream:
+            self._streaming.add(msg_id)
 
-        future = asyncio.Future()
+        future: asyncio.Future = asyncio.Future()
         self._pending[msg_id] = future
 
         await self._write_raw(make_request(msg_id, method, params))
-        self._last_activity = loop_time()
+        self._request_activity[msg_id] = loop.time()
+        if on_request_sent is not None:
+            on_request_sent(msg_id, method)
 
-        loop = asyncio.get_running_loop()
         try:
             while True:
-                remaining = timeout - (loop.time() - self._last_activity)
+                remaining = timeout - (loop.time() - self._request_activity.get(msg_id, loop.time()))
                 if remaining <= 0:
                     raise asyncio.TimeoutError(
                         f'no response to {method!r} after {timeout:g}s of inactivity'
                     )
-                done, _ = await asyncio.wait((future,), timeout=remaining)
-                if future in done:
-                    return future.result()
+                try:
+                    await asyncio.wait_for(asyncio.shield(future), timeout=remaining)
+                except TIMEOUT_EXCEPTIONS:
+                    continue
+                return future.result()
         except TIMEOUT_EXCEPTIONS:
             future.cancel()
             self._pending.pop(msg_id, None)
             raise
+        finally:
+            self._request_activity.pop(msg_id, None)
+            self._streaming.discard(msg_id)
 
     async def cancel_pending_request(
         self, msg_id: int, session_id: str | None = None,
@@ -242,11 +269,10 @@ class Connection:
         """Temporarily replace notification and request callbacks.
 
         Saves the current callbacks, installs *notification_callback* and
-        *request_callback*, then restores the originals on exit.
-
-        Yields to the event loop before restoring so that any trailing
-        notifications already received by the reader task are dispatched
-        through the temporary callbacks.
+        *request_callback*, then drains messages already received through
+        the temporary callbacks before restoring the originals on exit, so
+        replayed updates (e.g. the ``session/load`` replay path) land in
+        the replay buffer instead of the live stream.
         """
         saved_notification = self.notification_callback
         saved_request = self.request_callback
@@ -255,9 +281,23 @@ class Connection:
         try:
             yield
         finally:
-            await asyncio.sleep(0)
+            await self._drain_incoming()
             self.notification_callback = saved_notification
             self.request_callback = saved_request
+
+    async def _drain_incoming(self, max_rounds: int = 100) -> None:
+        """Route already-received messages through the temporary callbacks.
+
+        Yields until a full loop pass dispatches nothing new (bounded, so a
+        continuous stream cannot stall the restore). A single
+        ``await asyncio.sleep(0)`` was not enough: one straggler past it hit
+        the restored (wrong) handler.
+        """
+        for _ in range(max_rounds):
+            seen = self._dispatched
+            await asyncio.sleep(0)
+            if self._dispatched == seen:
+                return
 
     # Receiving
 
@@ -271,13 +311,15 @@ class Connection:
         if not raw:
             return True
 
-        self._last_activity = loop_time()
+        now = self._last_activity = loop_time()
 
         try:
             msg = _decode_json(raw)
         except Exception as exc:
             acp_log('connection', f'JSON decode error: {exc}: {raw[:200]!r}')
             return True
+
+        self._touch_streaming(msg, now)
 
         try:
             self._dispatch(msg)
@@ -301,9 +343,23 @@ class Connection:
                     fut.set_exception(ConnectionError('Agent closed connection'))
             self._pending.clear()
 
+    def _touch_streaming(self, msg: dict[str, Any], now: float) -> None:
+        """Refresh streaming request clocks for an incoming agent message.
+
+        Notifications and agent requests prove the agent is working on the
+        streaming turn, so they refresh streaming requests only; responses
+        (which carry an id) complete their own request and need no update.
+        """
+        if msg.get('id') is not None:
+            return
+        for mid in self._streaming:
+            if mid in self._request_activity:
+                self._request_activity[mid] = now
+
     def _dispatch(self, msg: dict[str, Any]) -> None:
         if not validate_json_rpc(msg):
             raise ACPError(-32700, 'Invalid JSON-RPC message')
+        self._dispatched += 1
 
         msg_id = msg.get('id')
         method = msg.get('method')

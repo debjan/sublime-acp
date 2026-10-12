@@ -113,15 +113,40 @@ def _is_positive_int(val: Any) -> bool:
     return isinstance(val, int) and not isinstance(val, bool) and val >= 1
 
 
-def _read_file_range(file_path: Path, line: int | None, limit: int | None) -> str:
-    """Synchronous helper: read a range of lines from a file (runs in executor)."""
+_FS_MAX_BYTES = 256 * 1024
+_FS_MAX_LINES = 2000
+_FS_TRUNCATION_NOTICE = (
+    f'\n[ACP: output truncated at {_FS_MAX_BYTES // 1024} KB / {_FS_MAX_LINES} lines - '
+    'retry with line/limit for the rest]'
+)
+
+
+def _read_file_range(file_path: Path, line: int | None, limit: int | None) -> tuple[str, bool]:
+    """Synchronous helper: read a range of lines from a file (runs in executor).
+
+    Returns ``(content, truncated)`` where *truncated* is ``True`` when the
+    plugin's own byte/line caps cut the output short. An explicit agent
+    ``limit`` paginates instead and never counts as truncation on its own.
+    """
     with open(file_path, 'r', encoding='utf-8') as f:
         start = max(0, (line - 1) if line else 0)
         for _ in itertools.islice(f, start):
             pass
-        selected = itertools.islice(f, limit) if limit else f
-        content = ''.join(selected)
-    return content
+        if limit is not None:
+            selected = itertools.islice(f, limit)
+        else:
+            selected = itertools.islice(f, _FS_MAX_LINES + 1)
+        chunks: list[str] = []
+        size = 0
+        for text in selected:
+            encoded = len(text.encode('utf-8'))
+            if len(chunks) >= _FS_MAX_LINES or size + encoded > _FS_MAX_BYTES:
+                return ''.join(chunks), True
+            chunks.append(text)
+            size += encoded
+        if limit is None and len(chunks) > _FS_MAX_LINES:
+            return ''.join(chunks[:_FS_MAX_LINES]), True
+        return ''.join(chunks), False
 
 
 def _write_file_sync(file_path: Path, content: str) -> None:
@@ -692,10 +717,12 @@ async def _handle_fs_read_text_file_sync(workspace_root: str, params: dict[str, 
 
     try:
         loop = asyncio.get_running_loop()
-        content = await loop.run_in_executor(None, _read_file_range, file_path, line, limit)
+        content, truncated = await loop.run_in_executor(None, _read_file_range, file_path, line, limit)
     except Exception as exc:
         return {'error': {'code': -32602, 'message': str(exc)}}
 
+    if truncated:
+        content += _FS_TRUNCATION_NOTICE
     return {'content': content}
 
 
@@ -1138,12 +1165,17 @@ async def _send_prompt_request(
     prompt_blocks: list[dict[str, str]],
     callback_timeout: float,
     callback: Any | None,
+    on_prompt_sent: Any | None = None,
 ) -> tuple[Any | None, str | None]:
+    def _report_sent(msg_id: int, method: str) -> None:
+        if on_prompt_sent is not None:
+            on_prompt_sent(msg_id)
+
     try:
         result = await conn.send_request('session/prompt', {
             'sessionId': session_id,
             'prompt': prompt_blocks,
-        }, timeout=callback_timeout)
+        }, timeout=callback_timeout, stream=True, on_request_sent=_report_sent)
         return result, None
     except ACPError as exc:
         acp_log('rpc', f'send_prompt_and_stream: ACPError: {exc}')
@@ -1218,6 +1250,7 @@ async def send_prompt_and_stream(
     show_tool_calls: bool = True,
     on_session_info: Any | None = None,
     on_elicitation: Any | None = None,
+    on_prompt_sent: Any | None = None,
 ) -> str:
     """Send a ``session/prompt`` and stream the response.
 
@@ -1268,6 +1301,9 @@ async def send_prompt_and_stream(
         on_elicitation: Optional callable returning the elicitation result
             dict for ``elicitation/create`` form requests. Absent means
             cancel every question.
+        on_prompt_sent: Optional callable ``on_prompt_sent(msg_id)``
+            invoked with the ``session/prompt`` request ID once assigned,
+            so callers can target that request for cancellation.
 
     Returns:
         A status string describing the outcome of the prompt: ``PROMPT_OK``
@@ -1306,6 +1342,7 @@ async def send_prompt_and_stream(
     ):
         result, status = await _send_prompt_request(
             conn, session_id, prompt_blocks, callback_timeout, callback,
+            on_prompt_sent,
         )
         if status is not None:
             return status

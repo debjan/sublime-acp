@@ -21,6 +21,30 @@ def _agents_path(cache_dir: Path) -> Path:
     return cache_dir / 'agents.json'
 
 
+def agent_key(cmd: list | None) -> str | None:
+    """Return the stable cache key for an agent command list."""
+    if not cmd:
+        return None
+    return json.dumps([str(part) for part in cmd])
+
+
+def get_entry(agents: dict, cmd: list | None) -> dict:
+    """Return the cache entry for *cmd*, migrating legacy keys in memory."""
+    if not cmd:
+        return {}
+    key = agent_key(cmd)
+    if key in agents:
+        return agents.get(key) or {}
+    legacy = cmd[0]
+    if (
+        len(cmd) == 1 and isinstance(legacy, str)
+        and legacy in agents and key is not None
+    ):
+        agents[key] = agents.pop(legacy)
+        return agents.get(key) or {}
+    return {}
+
+
 def _parse_agents(data_file: Path) -> tuple[dict, int | None]:
     """Parse ``data_file``, returning its contents and ``st_mtime_ns``."""
     try:
@@ -117,21 +141,21 @@ def update_session_id(cache_dir: Path, cmd: list, session_id: str) -> None:
     """
     with cache_lock:
         agents = load_agents(cache_dir)
-        agent_key = cmd[0]
-        if agents.get(agent_key, {}).get('last_session_id') == session_id:
+        entry = get_entry(agents, cmd)
+        key = agent_key(cmd)
+        if key is None:
             return
-        if agent_key not in agents:
-            agents[agent_key] = {}
-        agents[agent_key]['last_session_id'] = session_id
-        agents[agent_key]['last_sync'] = datetime.now().isoformat()
+        if entry.get('last_session_id') == session_id:
+            return
+        entry['last_session_id'] = session_id
+        entry['last_sync'] = datetime.now().isoformat()
+        agents[key] = entry
         save_agents(cache_dir, agents)
 
 
 def _get_agent_entry(agents: dict, cmd: list | None) -> tuple[dict, str | None]:
-    if not cmd:
-        return {}, None
-    agent_key = cmd[0]
-    return agents.get(agent_key) or {}, agent_key
+    entry = get_entry(agents, cmd)
+    return entry, agent_key(cmd)
 
 
 def set_session_title(cache_dir: Path, cmd: list, session_id: str, title: str | None) -> None:
@@ -179,7 +203,7 @@ def get_model_name(cache_dir: Path, cmd: list | None) -> str | None:
     """Return the agent's configured model from the cache, or ``None``."""
     if not cmd:
         return None
-    for opt in load_agents(cache_dir).get(cmd[0], {}).get('config_options') or []:
+    for opt in get_entry(load_agents(cache_dir), cmd).get('config_options') or []:
         if opt.get('id') == 'model':
             return opt.get('currentValue')
     return None
@@ -195,8 +219,8 @@ def set_config_option_value(cache_dir: Path, cmd: list | None, config_id: str, v
         return
     with cache_lock:
         agents = load_agents(cache_dir)
-        entry = agents.get(cmd[0])
-        if entry is None:
+        entry, key = _get_agent_entry(agents, cmd)
+        if key is None or not entry:
             return
         for opt in entry.get('config_options') or []:
             if isinstance(opt, dict) and opt.get('id') == config_id:
@@ -206,6 +230,7 @@ def set_config_option_value(cache_dir: Path, cmd: list | None, config_id: str, v
                 break
         else:
             return
+        agents[key] = entry
         save_agents(cache_dir, agents)
 
 
@@ -213,10 +238,14 @@ def clear_session_id(cache_dir: Path, cmd: list) -> None:
     """Clear the cached ``last_session_id`` for an agent."""
     with cache_lock:
         agents = load_agents(cache_dir)
-        entry = agents.get(cmd[0])
-        if entry is None:
+        entry, key = _get_agent_entry(agents, cmd)
+        if key is None or not entry:
             return
         entry.pop('last_session_id', None)
+        agents[key] = entry
+        legacy = cmd[0] if cmd else None
+        if legacy != key:
+            agents.pop(legacy, None)
         if not entry:
-            agents.pop(cmd[0], None)
+            agents.pop(key, None)
         save_agents(cache_dir, agents)

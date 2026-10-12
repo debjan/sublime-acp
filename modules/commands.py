@@ -135,7 +135,7 @@ def _apply_title_overrides(cmd: list | None, sessions: list) -> None:
     except Exception as exc:
         acp_log('switch_session', f'failed to load title overrides: {exc!r}')
         return
-    titles = agents.get(cmd[0], {}).get('session_titles') or {}
+    titles = cache.get_entry(agents, cmd).get('session_titles') or {}
     if not titles:
         return
     for s in sessions:
@@ -359,7 +359,7 @@ class AcpInputCommand(sublime_plugin.WindowCommand):
             cmd, model, env, timeout, session_prompt, session_id, use_daemon, auth, daemon_window_id,)
 
         agents = _load_agents()
-        slash_commands = agents.get(cmd[0] if cmd else '', {}).get('commands')
+        slash_commands = (cache.get_entry(agents, cmd) if cmd else {}).get('commands')
 
         owner_id = daemon_window_id if isinstance(daemon_window_id, int) else self.window.id()
         if not initial_text:
@@ -901,7 +901,7 @@ class _AcpSwitchConfigOptionCommand(sublime_plugin.WindowCommand):
         if not cmd:
             return None
         agents = _load_agents()
-        config_options = agents.get(cmd[0], {}).get('config_options') or []
+        config_options = cache.get_entry(agents, cmd).get('config_options') or []
         if self.config_id:
             return next((o for o in config_options if o.get('id') == self.config_id), None)
         if self.config_category:
@@ -1046,10 +1046,12 @@ class _AcpSwitchConfigOptionCommand(sublime_plugin.WindowCommand):
             if refreshed:
                 with cache.cache_lock:
                     agents = _load_agents()
-                    entry = agents.get(agent_cmd[0], {})
+                    key = cache.agent_key(agent_cmd)
+                    entry = cache.get_entry(agents, agent_cmd)
                     entry['config_options'] = refreshed
-                    agents[agent_cmd[0]] = entry
-                    cache.save_agents(cache_dir, agents)
+                    if key is not None:
+                        agents[key] = entry
+                        cache.save_agents(cache_dir, agents)
             else:
                 cache.set_config_option_value(cache_dir, agent_cmd, config_id, confirmed)
             acp_log(
@@ -1210,15 +1212,17 @@ class AcpInterruptCommand(sublime_plugin.WindowCommand):
         if state is None or not state.is_running() or not state.get('is_busy'):
             sublime.status_message('No agent prompt in progress')
             return
-        s = state.get('conn', 'loop', 'session_id')
+        s = state.get('conn', 'loop', 'session_id', 'prompt_msg_id')
         conn, loop, sid = s['conn'], s['loop'], s['session_id']
         if conn is not None and loop is not None and not loop.is_closed():
             state.set(has_replied=False)
             try:
-                msg_id = conn.last_request_id
+                prompt_msg_id = s.get('prompt_msg_id')
+                msg_id = prompt_msg_id if prompt_msg_id is not None else conn.last_request_id
                 if msg_id is not None:
                     asyncio.run_coroutine_threadsafe(conn.cancel_pending_request(msg_id, sid), loop)
-                    acp_log('daemon_session', f'interrupt sent: msg_id={msg_id}, sid={sid}', window_id)
+                    source = 'prompt' if prompt_msg_id is not None else 'last-request fallback'
+                    acp_log('daemon_session', f'interrupt sent: msg_id={msg_id} ({source}), sid={sid}', window_id)
                     sublime.status_message('ACP: Interrupted')
                 else:
                     acp_log('daemon_session', 'interrupt skipped: no pending request id', window_id)
@@ -1332,10 +1336,12 @@ def _sync_manual_config_cache(method, params, result, agent_cmd, cache_dir, wind
             if refreshed:
                 with cache.cache_lock:
                     agents = cache.load_agents(cache_dir)
-                    entry = agents.get(agent_cmd[0], {})
+                    key = cache.agent_key(agent_cmd)
+                    entry = cache.get_entry(agents, agent_cmd)
                     entry['config_options'] = refreshed
-                    agents[agent_cmd[0]] = entry
-                    cache.save_agents(cache_dir, agents)
+                    if key is not None:
+                        agents[key] = entry
+                        cache.save_agents(cache_dir, agents)
             else:
                 config_id = params.get('configId')
                 value = params.get('value')

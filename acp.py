@@ -66,7 +66,7 @@ def plugin_loaded():
 def _stop_all_daemons() -> None:
     """Stop every running daemon across all windows (used on plugin unload)."""
     request_unload()
-    stop_all_daemons(_stop_daemon, join_timeout=None)
+    stop_all_daemons(_stop_daemon, join_timeout=2.0)
 
 
 def plugin_unloaded():

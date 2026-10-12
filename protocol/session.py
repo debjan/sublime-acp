@@ -143,7 +143,7 @@ async def load_session_with_replay(
         'mcpServers': [],
     }
     async with conn.swap_callbacks(on_update, conn.request_callback):
-        result = await conn.send_request('session/load', base_params)
+        result = await conn.send_request('session/load', base_params, stream=True)
     return result if isinstance(result, dict) else None
 
 

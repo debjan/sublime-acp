@@ -186,12 +186,17 @@ async def close_writer(writer: asyncio.StreamWriter) -> None:
         await writer.wait_closed()
 
 
-def signal_process_group(pid: int, kill: bool = True) -> None:
+def signal_process_group(pid: int, kill: bool = True) -> bool:
     """Signal the whole process tree rooted at *pid* (agent plus grandchildren).
 
     Agents are spawned as the leader of a new session/process group (see
     :meth:`SubprocessTransport.spawn`), so a single ``killpg`` (POSIX) or
     ``taskkill /T`` (Windows) reaches the agent and every tool subprocess it forked.
+
+    Returns ``True`` when the signal was delivered (or there was nothing
+    left to signal); ``False`` when delivery itself failed, so callers can
+    skip the graceful wait and escalate promptly instead of waiting out a
+    signal that did nothing (notably a no-op ``taskkill /T`` without ``/F``).
     """
     if sys.platform == 'win32':
         args = ['taskkill', '/T', '/PID', str(pid)]
@@ -201,16 +206,21 @@ def signal_process_group(pid: int, kill: bool = True) -> None:
         startupinfo = subprocess.STARTUPINFO()
         startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
         startupinfo.wShowWindow = subprocess.SW_HIDE
-        with contextlib.suppress(Exception):
-            subprocess.run(args, capture_output=True, check=False, creationflags=creationflags, startupinfo=startupinfo, timeout=5)
-        return
+        try:
+            completed = subprocess.run(args, capture_output=True, check=False, creationflags=creationflags, startupinfo=startupinfo, timeout=5)
+        except Exception:
+            return False
+        return completed.returncode == 0
     try:
         pgid = os.getpgid(pid)
     except OSError:
-        return
+        return True
     sig = signal.SIGKILL if kill else signal.SIGTERM
-    with contextlib.suppress(OSError):
+    try:
         os.killpg(pgid, sig)
+    except OSError:
+        return False
+    return True
 
 
 async def _cleanup_proc_impl(
@@ -233,14 +243,17 @@ async def _cleanup_proc_impl(
         return
 
     if proc is not None:
-        acp_log('transports', f'_cleanup_proc_impl: terminating process group pid={proc.pid} (returncode={proc.returncode})')
+        gentle_ok = signal_process_group(proc.pid, kill=False)
+        acp_log('transports', f'_cleanup_proc_impl: gentle kill sent (ok={gentle_ok})')
     try:
         if proc is not None:
-            signal_process_group(proc.pid, kill=False)
-            await asyncio.wait_for(proc.wait(), timeout=2.0)
+            # A failed gentle signal (e.g. a no-op taskkill without /F) gets
+            # only a short grace period before escalating; a delivered one
+            # gets the full window to exit cleanly.
+            await asyncio.wait_for(proc.wait(), timeout=2.0 if gentle_ok else 0.2)
             acp_log('transports', f'_cleanup_proc_impl: terminated, returncode={proc.returncode}')
     except TIMEOUT_EXCEPTIONS:
-        acp_log('transports', f'_cleanup_proc_impl: terminate timed out (2s) for pid={proc_pid}')
+        acp_log('transports', f'_cleanup_proc_impl: terminate timed out for pid={proc_pid}')
     except Exception as e:
         acp_log('transports', f'_cleanup_proc_impl: error terminating process: {e}')
 

@@ -110,6 +110,7 @@ class DaemonState:
         self.queue = None
         self.is_busy: bool = False
         self.has_replied: bool = False
+        self.prompt_msg_id: int | None = None
         self.loop = None
         self.env: dict | None = None
         self.auth: bool | None = None
@@ -214,6 +215,7 @@ class DaemonState:
             self.queue = None
             self.is_busy = False
             self.has_replied = False
+            self.prompt_msg_id = None
             self.loop = None
             self.env = None
             self.auth = None
@@ -360,12 +362,14 @@ def _make_commands_updater(cmd):
             with cache.cache_lock:
                 cache_dir = _cache_dir()
                 agents = cache.load_agents(cache_dir)
-                entry = agents.get(cmd[0], {})
+                key = cache.agent_key(cmd)
+                entry = cache.get_entry(agents, cmd)
                 if entry.get('commands') == commands:
                     return
                 entry['commands'] = commands
-                agents[cmd[0]] = entry
-                cache.save_agents(cache_dir, agents)
+                if key is not None:
+                    agents[key] = entry
+                    cache.save_agents(cache_dir, agents)
         except Exception as e:
             acp_log('daemon', f'error caching commands: {e}')
 
@@ -484,10 +488,12 @@ def _refresh_cached_config(cmd, config_options) -> None:
     try:
         with cache.cache_lock:
             agents = cache.load_agents(_cache_dir())
-            entry = agents.get(cmd[0], {})
+            key = cache.agent_key(cmd)
+            entry = cache.get_entry(agents, cmd)
             entry['config_options'] = config_options
-            agents[cmd[0]] = entry
-            cache.save_agents(_cache_dir(), agents)
+            if key is not None:
+                agents[key] = entry
+                cache.save_agents(_cache_dir(), agents)
     except Exception as exc:
         acp_log('switch_session', f'failed to refresh cached config: {exc!r}')
 
@@ -524,7 +530,8 @@ def _cache_daemon_agent_info(cmd, init_result):
     try:
         with cache.cache_lock:
             agents = cache.load_agents(_cache_dir())
-            entry = agents.get(cmd[0], {})
+            key = cache.agent_key(cmd)
+            entry = cache.get_entry(agents, cmd)
             entry['commands'] = init_result.get('available_commands') or entry.get('commands')
             entry['config_options'] = init_result.get('config_options') or entry.get('config_options')
             confirmed_model = init_result.get('model')
@@ -535,8 +542,9 @@ def _cache_daemon_agent_info(cmd, init_result):
                         break
             entry['capabilities'] = {'result': init_result.get('initialize_result', {})}
             entry['last_sync'] = datetime.now().isoformat()
-            agents[cmd[0]] = entry
-            cache.save_agents(_cache_dir(), agents)
+            if key is not None:
+                agents[key] = entry
+                cache.save_agents(_cache_dir(), agents)
     except Exception as e:
         acp_log('daemon', f'error caching agent info: {e}')
 
@@ -841,9 +849,9 @@ def _execute_prompt_daemon(prompt: str, source_view,
         return
 
     if state.get('is_busy'):
-        sublime.status_message(
-            'Agent is busy. Cancel the current prompt first or wait.'
-        )
+        from .commands import _pending_drafts
+        _pending_drafts[window_id] = prompt
+        sublime.status_message('Agent is busy - prompt kept as draft. Reopen ACP: Prompt to retry.')
         return
 
     agent_name = state.get('agent_name') or 'agent'
@@ -1762,6 +1770,7 @@ def _daemon_thread_main(
                     show_tool_calls=settings.get('tool_calls', TOOL_CALLS_DEFAULT) == 'enabled',
                     on_session_info=_make_session_info_updater(state),
                     on_elicitation=_on_elicitation,
+                    on_prompt_sent=lambda mid: state.set(prompt_msg_id=mid),
                 )
                 if ok == PROMPT_OK:
                     state.set(session_prompt_pending=False)
@@ -1803,6 +1812,7 @@ def _daemon_thread_main(
                 )
                 state.set(
                     is_busy=False, last_activity=time.monotonic(),
+                    prompt_msg_id=None,
                 )
                 owner_id = state.get('window_id')
                 ui.on_main(
