@@ -317,7 +317,7 @@ class AcpSendManualRequestCommand(sublime_plugin.WindowCommand):
             )
             return
         s = state.get('session_id', 'work_dir')
-        initial = _manual_skeleton(method, s['session_id'], s['work_dir'] or '.')
+        initial = _manual_skeleton(method, s['session_id'], s['work_dir'] or str(Path.cwd()))
         _show_manual_params_view(self, method, initial)
 
     def _on_custom_method(self, text):

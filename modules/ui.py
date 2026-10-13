@@ -90,7 +90,8 @@ def resolve_work_dir(window: sublime.Window, source_view: sublime.View) -> str:
     """Resolve the working directory for an ACP session.
 
     Prefers ``project_path``, falls back to ``folder``, then the source
-    view's parent directory, then the first window folder, and finally ``'.'``.
+    view's parent directory, then the first window folder, and finally the
+    current process directory.
 
     Args:
         window: The Sublime window context.
@@ -109,7 +110,7 @@ def resolve_work_dir(window: sublime.Window, source_view: sublime.View) -> str:
     if work_dir is None:
         if folders := window.folders():
             work_dir = Path(folders[0])
-    return str(work_dir) if work_dir is not None else '.'
+    return str(work_dir) if work_dir is not None else str(Path.cwd())
 
 
 _MAX_ATTACH_SELECTIONS = 10
