@@ -30,10 +30,24 @@ def on_main(fn: Callable[[], Any], delay: int = 0) -> None:
     sublime.set_timeout(fn, delay)
 
 
+def _find_reusable_empty_view(window: sublime.Window) -> sublime.View | None:
+    """Return the single empty untitled view if it is the only one open."""
+    views = window.views()
+    if len(views) != 1:
+        return None
+    view = views[0]
+    if view.file_name() is None and view.size() == 0 and not view.is_dirty():
+        return view
+    return None
+
+
 def create_output_view(window: sublime.Window, agent_name: str = '',
                        role: str = 'prompt') -> sublime.View:
     """Create a scratch buffer output view for ACP responses.
 
+    Reuses the window's single view in place when it is an empty untitled
+    buffer, so a fresh window keeps a single group instead of gaining a
+    split. Otherwise creates a new scratch view.
     The view is configured with Markdown syntax, word wrap enabled, and
     line numbers hidden. The ``font_size`` setting overrides the view's
     font size when set (``null``/unset uses the global font size).
@@ -44,11 +58,11 @@ def create_output_view(window: sublime.Window, agent_name: str = '',
         role: ``'prompt'`` for one-shot prompts, ``'daemon'`` for persistent sessions.
 
     Returns:
-        The newly created ``sublime.View``.
+        The reused or newly created ``sublime.View``.
     """
     suffix = f': {agent_name}' if agent_name else ''
     label = 'ACP Chat' if role == 'daemon' else 'ACP Prompt'
-    view = window.new_file()
+    view = _find_reusable_empty_view(window) or window.new_file()
     view.set_scratch(True)
     view.set_name(f'{label}{suffix}')
     view.assign_syntax('Packages/Markdown/Markdown.sublime-syntax')
@@ -163,7 +177,13 @@ def attach_selection_to_prompt(prompt: str, source_view: sublime.View,
 
 
 def open_split_for_output(window: sublime.Window, output_view: sublime.View) -> None:
-    """Rearrange the window layout so the output view sits in a 2-column split."""
+    """Rearrange the window layout so the output view sits in a 2-column split.
+
+    No-op when the output view is the window's only view (fresh window
+    reusing its empty buffer) - there is nothing to split against.
+    """
+    if len(window.views()) <= 1:
+        return
     num_groups = window.num_groups()
     active_group = window.active_group()
 
