@@ -39,6 +39,7 @@ def dismiss_elicitation_prompt(window_id: int) -> None:
     def _dismiss():
         window = sublime.Window(window_id)
         if window is not None:
+            window.run_command('hide_overlay')
             window.run_command('hide_panel', {'cancel': True})
         resolver = _active_elicitations.pop(window_id, None)
         if resolver is not None:
@@ -67,7 +68,7 @@ def _enum_options(spec: dict) -> list[tuple[Any, str, str]] | None:
 
 
 def _show_choice(window_id: int, caption: str, labels: list, selected: int,
-                 on_done: Callable) -> None:
+                 on_done: Callable, shown: list | None = None) -> None:
     """Show a quick panel with *labels* on the main thread."""
     if window_id not in [w.id() for w in sublime.windows()]:
         on_done(-1)
@@ -75,6 +76,8 @@ def _show_choice(window_id: int, caption: str, labels: list, selected: int,
     window = sublime.Window(window_id)
     from . import broadcast
     broadcast.flash_prompt(f'ACP: question - {caption}', window_id)
+    if shown is not None:
+        shown.append(True)
     window.show_quick_panel(labels, on_done, selected_index=selected, placeholder=caption)
 
 
@@ -123,27 +126,69 @@ async def _ask_choice(window_id: int, caption: str, options: list[tuple[Any, str
             prior(_CANCELLED)
         _active_elicitations[window_id] = _resolve
 
-        selected = 0
-        quick_items: list = []
-        quick_panel_item = getattr(sublime, 'QuickPanelItem', None)
-        for i, (_, label, desc) in enumerate(options):
-            if default is not None and options[i][0] == default:
-                selected = i
-            short = ui.truncate_middle(desc) if desc else ui.truncate_middle(caption)
-            if quick_panel_item is not None:
-                quick_items.append(quick_panel_item(label, details=short))
-            else:
-                quick_items.append(label)
-        labels = quick_items
-
+        panel_shown: list = []
+        running_loop = asyncio.get_running_loop()
+        deadline = running_loop.time() + remaining if remaining is not None else None
+        notify_text = f'ACP: question - {ui.truncate_middle(caption)}'
         try:
-            ui.on_main(
-                lambda: _show_choice(window_id, ui.truncate_middle(caption), labels, selected, _on_done),
-            )
-            if remaining is not None:
-                await asyncio.wait_for(event.wait(), remaining)
-            else:
-                await event.wait()
+            if not await ui.wait_for_window_active(
+                window_id, deadline, cancelled=event.is_set, notify_text=notify_text,
+            ):
+                if not event.is_set():
+                    acp_log('elicitation', 'choice timed out waiting for focus - cancelling', window_id)
+                return _CANCELLED
+            if event.is_set():
+                return _CANCELLED
+
+            selected = 0
+            quick_items: list = []
+            quick_panel_item = getattr(sublime, 'QuickPanelItem', None)
+            for i, (_, label, desc) in enumerate(options):
+                if default is not None and options[i][0] == default:
+                    selected = i
+                short = ui.truncate_middle(desc) if desc else ui.truncate_middle(caption)
+                if quick_panel_item is not None:
+                    quick_items.append(quick_panel_item(label, details=short))
+                else:
+                    quick_items.append(label)
+            labels = quick_items
+
+            while True:
+                if deadline is not None:
+                    remaining = deadline - running_loop.time()
+                    if remaining <= 0:
+                        acp_log('elicitation', 'whole-form timeout exceeded - cancelling', window_id)
+                        return _CANCELLED
+                def _show() -> None:
+                    _show_choice(
+                        window_id, ui.truncate_middle(caption), labels, selected,
+                        _on_done, shown=panel_shown,
+                    )
+
+                ui.on_main(_show)
+                shown_at = running_loop.time()
+                if remaining is not None:
+                    await asyncio.wait_for(event.wait(), remaining)
+                else:
+                    await event.wait()
+                if (
+                    panel_shown and result and result[0] == -1
+                    and await ui.panel_cancel_is_background(window_id, running_loop.time() - shown_at)
+                ):
+                    acp_log('elicitation', 'panel auto-dismissed while unfocused - waiting for focus', window_id)
+                    event.clear()
+                    result.clear()
+                    del panel_shown[:]
+                    if not await ui.wait_for_window_active(
+                        window_id, deadline, cancelled=event.is_set, notify_text=notify_text,
+                    ):
+                        if not event.is_set():
+                            acp_log('elicitation', 'choice timed out waiting for focus - cancelling', window_id)
+                        return _CANCELLED
+                    if event.is_set():
+                        return _CANCELLED
+                    continue
+                break
         except TIMEOUT_EXCEPTIONS:
             acp_log('elicitation', 'choice timed out - cancelling', window_id)
             return _CANCELLED
@@ -244,7 +289,10 @@ async def resolve_elicitation(
 
     Collects each property in *requestedSchema* via sequential native
     panels sharing one whole-form deadline. Any dismiss, validation
-    failure, or timeout cancels the whole form.
+    failure, or timeout cancels the whole form. An optional ``<name>_custom``
+    text field is skipped (omitted from the result) when its sibling
+    ``<name>`` field already resolved to anything but ``'custom'`` - picking
+    a real option makes the free-text follow-up meaningless.
 
     Args:
         params: The ``elicitation/create`` params dict.
@@ -284,6 +332,15 @@ async def resolve_elicitation(
 
     content: dict[str, Any] = {}
     for key in ordered:
+        sibling = key[:-len('_custom')] if key.endswith('_custom') else ''
+        if (
+            sibling
+            and key not in required
+            and isinstance(content.get(sibling), str)
+            and content[sibling].strip().lower() != 'custom'
+        ):
+            acp_log('elicitation', f'skipping {key!r} - {sibling!r} is not custom', window_id)
+            continue
         spec = props[key]
         if not isinstance(spec, dict):
             acp_log('elicitation', f'unsupported schema for {key!r} - cancelling', window_id)

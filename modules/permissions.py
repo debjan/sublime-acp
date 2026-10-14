@@ -114,7 +114,8 @@ def _resolve_auto_permission(
     return outcome
 
 
-def _show_permission_prompt(params: dict, on_done: Callable, window_id: int) -> None:
+def _show_permission_prompt(params: dict, on_done: Callable, window_id: int,
+                            shown: list | None = None) -> None:
     """Show a quick panel with permission options."""
     if window_id not in [w.id() for w in sublime.windows()]:
         on_done(None)
@@ -159,6 +160,8 @@ def _show_permission_prompt(params: dict, on_done: Callable, window_id: int) -> 
     else:  # pragma: no cover - older Sublime without QuickPanelItem
         items = [f'{name} - {short_title}' for name in names]
 
+    if shown is not None:
+        shown.append(True)
     window.show_quick_panel(
         items, _on_done,
         placeholder=f'Agent wants to: {short_title}',
@@ -170,6 +173,7 @@ def dismiss_permission_prompt(window_id: int) -> None:
     def _dismiss():
         window = sublime.Window(window_id)
         if window is not None:
+            window.run_command('hide_overlay')
             window.run_command('hide_panel', {'cancel': True})
         resolver = _active_prompts.pop(window_id, None)
         if resolver is not None:
@@ -221,21 +225,74 @@ async def _prompt_user(
             prior(None)
         _active_prompts[window_id] = _on_done
 
+        panel_shown: list = []
+        running_loop = asyncio.get_running_loop()
+        deadline = running_loop.time() + timeout if timeout and timeout > 0 else None
+        tool_call = params.get('toolCall', {}) if isinstance(params, dict) else {}
+        notify_text = f'ACP: permission needed - {ui.truncate_middle(tool_call.get("title", "Unknown operation"))}'
         try:
-            ui.on_main(
-                lambda: _show_permission_prompt(params, _on_done, window_id),
-            )
-            try:
-                if timeout and timeout > 0:
-                    await asyncio.wait_for(event.wait(), timeout)
-                else:
-                    await event.wait()
-            except TIMEOUT_EXCEPTIONS:
-                acp_log(
-                    'permissions',
-                    f'permission prompt timed out after {timeout}s - denying',
-                    window_id,
-                )
+            if not await ui.wait_for_window_active(
+                window_id, deadline, cancelled=event.is_set, notify_text=notify_text,
+            ):
+                if not event.is_set():
+                    acp_log(
+                        'permissions',
+                        'permission prompt timed out waiting for focus - denying',
+                        window_id,
+                    )
+                return None
+            if event.is_set():
+                return None
+
+            while True:
+                if deadline is not None:
+                    timeout = deadline - running_loop.time()
+                    if timeout <= 0:
+                        acp_log(
+                            'permissions',
+                            'permission prompt timed out waiting for focus - denying',
+                            window_id,
+                        )
+                        return None
+                def _show() -> None:
+                    _show_permission_prompt(params, _on_done, window_id, shown=panel_shown)
+
+                ui.on_main(_show)
+                shown_at = running_loop.time()
+                try:
+                    if timeout and timeout > 0:
+                        await asyncio.wait_for(event.wait(), timeout)
+                    else:
+                        await event.wait()
+                except TIMEOUT_EXCEPTIONS:
+                    acp_log(
+                        'permissions',
+                        f'permission prompt timed out after {timeout}s - denying',
+                        window_id,
+                    )
+                    return None
+                if (
+                    panel_shown and result and result[0] is None
+                    and await ui.panel_cancel_is_background(window_id, running_loop.time() - shown_at)
+                ):
+                    acp_log('permissions', 'panel auto-dismissed while unfocused - waiting for focus', window_id)
+                    event.clear()
+                    result.clear()
+                    del panel_shown[:]
+                    if not await ui.wait_for_window_active(
+                        window_id, deadline, cancelled=event.is_set, notify_text=notify_text,
+                    ):
+                        if not event.is_set():
+                            acp_log(
+                                'permissions',
+                                'permission prompt timed out waiting for focus - denying',
+                                window_id,
+                            )
+                        return None
+                    if event.is_set():
+                        return None
+                    continue
+                break
         finally:
             if _active_prompts.get(window_id) is _on_done:
                 del _active_prompts[window_id]

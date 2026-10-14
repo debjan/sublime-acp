@@ -28,7 +28,7 @@ flowchart TD
 1. **Auto-reject** - fnmatch-style glob patterns are checked first; a match rejects the request immediately.
 2. **Sensitive files** - fs reads matching `sensitive_globs` (default `.env`, `*.pem`, `*key*`, `secrets.*`) always prompt, even under `read*` auto-allow.
 3. **Auto-allow** - same pattern matching; a match approves the request without any UI.
-4. **Interactive prompt** - otherwise a quick panel opens *in the window that owns the daemon* (the code uses the explicit `window_id`, not `sublime.active_window()`), listing the options the agent offered. The window is never forced to the front; a status-bar flash plus the panel placeholder signals the pending prompt instead.
+4. **Interactive prompt** - otherwise a quick panel opens *in the window that owns the daemon* (the code uses the explicit `window_id`, not `sublime.active_window()`), listing the options the agent offered. The window is never forced to the front; a status-bar flash plus the panel placeholder signals the pending prompt instead. Quick panels are overlays bound to the active window, so a prompt fired while its owner is in the background defers (within the prompt timeout) until that window is focused instead of auto-cancelling.
 
 ## Key behaviors
 

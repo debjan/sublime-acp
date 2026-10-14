@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
+import sys
 from pathlib import Path
 from typing import Any, Callable
 
 import sublime
 
-from ..protocol import acp_log
+from ..protocol import TIMEOUT_EXCEPTIONS, acp_log
 from . import broadcast
 from .config import SESSION_PROMPT, STATUS_KEY_DAEMON, TURN_DIVIDER, settings
 
@@ -28,6 +30,57 @@ def on_main(fn: Callable[[], Any], delay: int = 0) -> None:
         delay: Delay in milliseconds. Defaults to 0 (run as soon as possible).
     """
     sublime.set_timeout(fn, delay)
+
+
+async def call_on_main(fn: Callable[[], Any]) -> Any:
+    """Run *fn* on Sublime's main thread and await its result.
+
+    Must be awaited from a daemon event loop thread. The callable runs
+    via ``sublime.set_timeout`` (main thread); the result or exception
+    is marshalled back with ``call_soon_threadsafe`` so the loop is
+    never blocked.
+
+    Args:
+        fn: Zero-argument callable to run on the main thread.
+
+    Returns:
+        Whatever *fn* returns.
+    """
+    running = asyncio.get_running_loop()
+    fut = running.create_future()
+
+    def _run() -> None:
+        if fut.done():
+            return
+        try:
+            result = fn()
+        except Exception as exc:
+            running.call_soon_threadsafe(fut.set_exception, exc)
+        else:
+            running.call_soon_threadsafe(fut.set_result, result)
+
+    sublime.set_timeout(_run, 0)
+    return await fut
+
+
+def _focus_snapshot_unsafe(window_id: int) -> tuple:
+    """Capture window/focus state; main thread only (no marshaling)."""
+    open_ids = [w.id() for w in sublime.windows()]
+    if window_id not in open_ids:
+        return (False, None, None)
+    active = sublime.active_window()
+    active_id = active.id() if active is not None else None
+    return (True, active_id, owner_has_os_focus(window_id))
+
+
+async def _focus_snapshot(window_id: int) -> tuple:
+    """Capture window/focus state via the main thread.
+
+    Raises:
+        Exception: Whatever the main-thread snapshot raised, or a
+            timeout when the main thread does not answer within 5s.
+    """
+    return await asyncio.wait_for(call_on_main(lambda: _focus_snapshot_unsafe(window_id)), 5)
 
 
 def _find_reusable_empty_view(window: sublime.Window) -> sublime.View | None:
@@ -225,8 +278,10 @@ def make_stream_callback(
     When *state* is provided (daemon mode), the live view is resolved from
     ``state`` on every chunk, so output follows a recreated tab after the
     user closes the old one. The callback also tracks ``has_replied`` and
-    focuses the view on the first reply. All view mutations run on the
-    main thread via ``sublime.set_timeout``.
+    focuses the view on the first reply, but only when the owning window is
+    already active - a background window (e.g. while typing in another
+    Sublime window) gets no focus steal, just the turn-end flash. All view
+    mutations run on the main thread via ``sublime.set_timeout``.
 
     Args:
         output_view: The view to append streamed chunks to (fallback when
@@ -243,10 +298,16 @@ def make_stream_callback(
             if not has_replied:
                 def _focus():
                     ov = state.get('output_view')
-                    if ov and ov.window():
-                        group, _ = ov.window().get_view_index(ov)
-                        ov.window().focus_group(group)
-                        ov.window().focus_view(ov)
+                    window = ov.window() if ov else None
+                    if window is None:
+                        return
+                    active = sublime.active_window()
+                    if active is not None and active.id() == window.id():
+                        group, _ = window.get_view_index(ov)
+                        window.focus_group(group)
+                        window.focus_view(ov)
+                    else:
+                        acp_log('ui', 'owning window inactive - skipping output focus (no steal)', window.id())
                 on_main(_focus)
 
         def _append_live(t=text):
@@ -310,13 +371,141 @@ def append_prompt_turn(view: sublime.View, prompt: str,
 
 
 def window_by_id(window_id):
-    """Return the open window matching *window_id*, or ``None``."""
+    """Return the open window matching *window_id*, or ``None``.
+
+    Main thread only; callers on daemon threads must marshal via
+    :func:`call_on_main` or :func:`on_main`.
+    """
     if not isinstance(window_id, int):
         return None
     for w in sublime.windows():
         if w.id() == window_id:
             return w
     return None
+
+
+async def wait_for_window_active(window_id: int, deadline: float | None = None,
+                                 poll: float = 0.25, cancelled: Any = None,
+                                 notify_text: str | None = None) -> bool:
+    """Wait until *window_id* can host a quick panel.
+
+    Quick panels are overlays bound to the active window; showing one on a
+    background window fires ``on_done(-1)`` immediately. ``sublime`` only
+    tracks the active window *within* the app, so on Windows the OS
+    foreground window must additionally belong to *window_id* (Alt+Tab away
+    and back otherwise slips through the gate). Callers gate panel display
+    on this helper so background prompts defer instead of cancelling.
+
+    Args:
+        window_id: Owning window to wait for.
+        deadline: Running-loop timestamp the wait must not pass, or ``None``
+            to wait forever.
+        poll: Seconds between activation checks.
+        cancelled: Optional zero-argument callable polled alongside
+            activation; a truthy return aborts the wait.
+        notify_text: Optional prompt text flashed (status bar plus OS
+            taskbar/banner) once deferral begins, so an away user is nudged
+            while the panel itself stays unshown until focus returns.
+
+    Returns:
+        ``True`` when *window_id* is active, else ``False`` on timeout,
+        cancellation, or a closed window.
+
+    Sublime API state is snapshotted on the main thread via
+    :func:`call_on_main`; a snapshot failure is treated as transient
+    (keep polling) rather than a cancel.
+    """
+    running = asyncio.get_running_loop()
+    logged = False
+    while True:
+        if callable(cancelled):
+            try:
+                if cancelled():
+                    return False
+            except Exception as exc:
+                acp_log('ui', f'cancel check failed: {exc!r}', window_id)
+        try:
+            is_open, active_id, os_focus = await _focus_snapshot(window_id)
+        except TIMEOUT_EXCEPTIONS as exc:
+            acp_log('ui', f'focus snapshot timed out - retrying: {exc!r}', window_id)
+            is_open, active_id, os_focus = True, None, None
+        except Exception as exc:
+            acp_log('ui', f'focus snapshot failed - retrying: {exc!r}', window_id)
+            is_open, active_id, os_focus = True, None, None
+        if not is_open:
+            return False
+        if active_id == window_id and os_focus is not False:
+            return True
+        if deadline is not None and running.time() >= deadline:
+            return False
+        if not logged:
+            acp_log('ui', 'owning window inactive - deferring quick panel until focused', window_id)
+            if notify_text:
+                broadcast.flash_prompt(notify_text, window_id)
+            logged = True
+        delay = poll
+        if deadline is not None:
+            delay = min(poll, max(0.05, deadline - running.time()))
+        await asyncio.sleep(delay)
+
+
+def owner_has_os_focus(window_id: int) -> bool | None:
+    """Return whether the OS foreground window belongs to *window_id*.
+
+    Main thread only; daemon threads must go through :func:`_focus_snapshot`.
+
+    Windows-only (via ``GetForegroundWindow`` vs ``Window.hwnd()``);
+    ``None`` on other platforms or when the handle is unavailable, in which
+    case callers fall back to the ``sublime``-level activation check.
+    """
+    if sys.platform != 'win32':
+        return None
+    try:
+        import ctypes
+        window = sublime.Window(window_id)
+        hwnd = window.hwnd() if window is not None else None
+    except Exception:
+        return None
+    if not hwnd:
+        return None
+    try:
+        return ctypes.windll.user32.GetForegroundWindow() == hwnd
+    except Exception:
+        return None
+
+
+#: A quick-panel cancel faster than this is unlikely to be a deliberate Esc.
+FAST_CANCEL_GRACE = 1.0
+
+
+async def panel_cancel_is_background(window_id: int, elapsed: float) -> bool:
+    """Return whether a quick-panel cancel looks like an auto-dismiss.
+
+    Distinguishes Sublime auto-dismissing a panel shown while unfocused
+    (``on_done(-1)`` within ~200ms, no user involved) from a genuine user
+    Esc. Decided by OS focus where available, else by Sublime-level
+    activation; the cancel latency grace only applies when the active
+    window is unknown, never to override a known-active owner.
+
+    Window/focus state is snapshotted on the main thread; a snapshot
+    failure returns ``False`` (treat as a genuine cancel).
+    """
+    try:
+        is_open, active_id, focus = await _focus_snapshot(window_id)
+    except Exception as exc:
+        acp_log('ui', f'cancel focus snapshot failed: {exc!r}', window_id)
+        return False
+    if not is_open:
+        return False
+    if focus is False:
+        return True
+    if focus is True:
+        return False
+    if active_id is not None and active_id != window_id:
+        return True
+    if active_id == window_id:
+        return False
+    return elapsed < FAST_CANCEL_GRACE
 
 
 def truncate_middle(text: str, max_chars: int = 160) -> str:
@@ -416,18 +605,17 @@ def reopen_daemon_input_panel(cmd, model, timeout, session_prompt, session_id, a
     window = window_by_id(owner_id)
     if window is None:
         return  # owning window closed - never fall back to another window
-    if window is not None:
-        window.run_command('acp_input', {
-            'cmd': cmd,
-            'model': model,
-            'env': env or {},
-            'timeout': timeout,
-            'session_prompt': session_prompt,
-            'session_id': session_id,
-            'use_daemon': True,
-            'auth': auth,
-            'daemon_window_id': owner_id,
-        })
-        broadcast.set_broadcast_status(
-            STATUS_KEY_DAEMON, broadcast.daemon_status_text(agent_name, cmd), window
-        )
+    window.run_command('acp_input', {
+        'cmd': cmd,
+        'model': model,
+        'env': env or {},
+        'timeout': timeout,
+        'session_prompt': session_prompt,
+        'session_id': session_id,
+        'use_daemon': True,
+        'auth': auth,
+        'daemon_window_id': owner_id,
+    })
+    broadcast.set_broadcast_status(
+        STATUS_KEY_DAEMON, broadcast.daemon_status_text(agent_name, cmd), window
+    )
