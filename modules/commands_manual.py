@@ -322,8 +322,7 @@ class AcpSendManualRequestCommand(sublime_plugin.WindowCommand):
 
     def _on_custom_method(self, text):
         """Open the params view with an empty object for a typed method name."""
-        method = (text or '').strip()
-        if not method:
+        if not (method := (text or '').strip()):
             return
         state = get_state(self.window.id())
         if state is None or not state.is_running():
@@ -369,8 +368,7 @@ class AcpSendManualRequestCommand(sublime_plugin.WindowCommand):
         is_notification = method == 'session/cancel'
         agent_cmd = state.get('agent_cmd')
         cache_dir = Path(sublime.cache_path()) / 'ACP'
-        track_busy = method in _MANUAL_BUSY_METHODS
-        if track_busy:
+        if track_busy := method in _MANUAL_BUSY_METHODS:
             state.set(is_busy=True)
 
         async def _send():

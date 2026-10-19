@@ -87,7 +87,7 @@ While a daemon session is active, **ACP: Switch Model**, **ACP: Switch Mode**, a
 
 ## Requirements
 
-- Sublime Text 4+
+- Sublime Text 4+ (>=4095)
 - One or more ACP-compatible agents installed
 
 ## Documentation

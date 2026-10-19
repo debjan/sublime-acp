@@ -293,8 +293,7 @@ def _handle_session_update(update: dict) -> list | None:
     Handles ``agent_message_chunk`` and ``agent_thought_chunk`` updates,
     returning a list of text strings or ``('__thought__', text)`` tuples.
     """
-    kind = update.get('sessionUpdate')
-    if not kind:
+    if not (kind := update.get('sessionUpdate')):
         return None
     content = update.get('content', {})
     if not isinstance(content, dict):
@@ -1017,16 +1016,14 @@ def _emit_text(state: _StreamState, chunk: str, thoughts_mode: str, callback: An
         chunk = '\n' + chunk
         state.at_turn_start = False
     elif state.at_turn_start:
-        chunk = chunk.lstrip('\r\n')
-        if not chunk:
+        if not (chunk := chunk.lstrip('\r\n')):
             return
         state.at_turn_start = False
     state.last_was_tool = False
     chunk = state.pending_trailing + chunk
     stripped = chunk.rstrip('\r\n')
     state.pending_trailing = chunk[len(stripped):]
-    chunk = stripped
-    if not chunk:
+    if not (chunk := stripped):
         return
     if callback:
         callback(chunk)

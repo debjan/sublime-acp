@@ -131,8 +131,7 @@ class SubprocessTransport:
         if self._cwd:
             extra_kwargs['cwd'] = self._cwd
 
-        resolved = shutil.which(str(full_cmd[0]))
-        if not resolved:
+        if not (resolved := shutil.which(str(full_cmd[0]))):
             acp_log('transports', f'binary not found: {full_cmd[0]}')
             raise AgentSpawnError(full_cmd[0])
         full_cmd[0] = resolved

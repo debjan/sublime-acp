@@ -102,8 +102,7 @@ def get_window_folders(window):
     Returns:
         List of folder paths to scan for project files.
     """
-    folders = window.folders()
-    if not folders:
+    if not (folders := window.folders()):
         view = window.active_view()
         if view and view.file_name():
             folders = [os.path.dirname(view.file_name())]

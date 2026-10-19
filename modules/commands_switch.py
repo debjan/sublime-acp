@@ -62,19 +62,13 @@ class _AcpSessionInputHandler(sublime_plugin.ListInputHandler):
         ambiguous_id = getattr(sublime, 'KIND_ID_AMBIGUOUS', 0)
         green_id = getattr(sublime, 'KIND_ID_COLOR_GREENISH', ambiguous_id)
         navigation_id = getattr(sublime, 'KIND_ID_NAVIGATION', ambiguous_id)
-        list_item_cls = getattr(sublime, 'ListInputItem', None)
-        items = []
-        new_kind = (navigation_id, '+', '')
-        if list_item_cls is not None:
-            items.append(list_item_cls(
+        items = [
+            sublime.ListInputItem(
                 '+ Start new session', '',
-                details='Start fresh without restarting the agent', kind=new_kind,
-            ))
-        else:  # pragma: no cover - older Sublime without ListInputItem
-            items.append(sublime.QuickPanelItem(
-                '+ Start new session',
-                details='Start fresh without restarting the agent', kind=new_kind,
-            ))
+                details='Start fresh without restarting the agent',
+                kind=(navigation_id, '+', ''),
+            ),
+        ]
         selected_index = 0
         for i, s in enumerate(self._sessions, start=1):
             sid = s.get('sessionId', '')
@@ -82,10 +76,7 @@ class _AcpSessionInputHandler(sublime_plugin.ListInputHandler):
             if is_current:
                 selected_index = i
             kind = (green_id, '✓', '') if is_current else (ambiguous_id, '', '')
-            if list_item_cls is not None:
-                items.append(list_item_cls(title, sid, details=detail, kind=kind))
-            else:
-                items.append(sublime.QuickPanelItem(title, details=detail, kind=kind))
+            items.append(sublime.ListInputItem(title, sid, details=detail, kind=kind))
         return (items, selected_index)
 
 
@@ -356,8 +347,7 @@ class _AcpSwitchConfigOptionCommand(sublime_plugin.WindowCommand):
         state = get_state(self.window.id())
         if state is None or not state.is_running():
             return None
-        cmd = state.get('agent_cmd')
-        if not cmd:
+        if not (cmd := state.get('agent_cmd')):
             return None
         agents = _load_agents()
         config_options = cache.get_entry(agents, cmd).get('config_options') or []
@@ -605,22 +595,17 @@ class _AcpConfigOptionInputHandler(sublime_plugin.ListInputHandler):
         """Return ``(items, selected_index)`` with a gutter check on current."""
         ambiguous_id = getattr(sublime, 'KIND_ID_AMBIGUOUS', 0)
         green_id = getattr(sublime, 'KIND_ID_COLOR_GREENISH', ambiguous_id)
-        list_item_cls = getattr(sublime, 'ListInputItem', None)
         items = []
         selected_index = 0
         for i, o in enumerate(self._options):
             name = o.get('name') or o.get('value', '')
             value_str = o.get('value', '')
-            group = o.get('group') or ''
-            if group:
+            if group := o.get('group') or '':
                 name = f'{group} / {name}'
             if is_current := o.get('value') == self._current:
                 selected_index = i
             kind = (green_id, '✓', '') if is_current else (ambiguous_id, '', '')
-            if list_item_cls is not None:
-                items.append(list_item_cls(name, value_str, details=value_str, kind=kind))
-            else:
-                items.append(sublime.QuickPanelItem(name, details=value_str, kind=kind))
+            items.append(sublime.ListInputItem(name, value_str, details=value_str, kind=kind))
         return (items, selected_index)
 
 

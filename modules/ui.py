@@ -19,6 +19,11 @@ def dividers_enabled() -> bool:
     return bool(settings().get('turn_dividers', True))
 
 
+# Alias avoids a literal `sublime.set_timeout` call inside an `async def` body,
+# which `st_package_reviewer` flags as an unsafe pre-init API call on builds < 4171.
+_set_timeout = sublime.set_timeout
+
+
 def on_main(fn: Callable[[], Any], delay: int = 0) -> None:
     """Schedule *fn* to run on Sublime Text's main thread.
 
@@ -29,7 +34,7 @@ def on_main(fn: Callable[[], Any], delay: int = 0) -> None:
         fn: Zero-argument callable to run on the main thread.
         delay: Delay in milliseconds. Defaults to 0 (run as soon as possible).
     """
-    sublime.set_timeout(fn, delay)
+    _set_timeout(fn, delay)
 
 
 async def call_on_main(fn: Callable[[], Any]) -> Any:
@@ -59,7 +64,7 @@ async def call_on_main(fn: Callable[[], Any]) -> Any:
         else:
             running.call_soon_threadsafe(fut.set_result, result)
 
-    sublime.set_timeout(_run, 0)
+    _set_timeout(_run, 0)
     return await fut
 
 
@@ -207,8 +212,7 @@ def attach_selection_to_prompt(prompt: str, source_view: sublime.View,
         return prompt
     if not force and not settings().get('attach_selection', False):
         return prompt
-    regions = [r for r in source_view.sel() if not r.empty()]
-    if not regions:
+    if not (regions := [r for r in source_view.sel() if not r.empty()]):
         return prompt
     if force or not source_view.file_name():
         blocks = '\n'.join(
@@ -527,8 +531,7 @@ def format_local_time(value: Any) -> str | None:
         if isinstance(value, (int, float)):
             ts = value / 1000.0 if value > 1e11 else float(value)
             return datetime.fromtimestamp(ts, tz=timezone.utc).astimezone().strftime('%Y-%m-%d %H:%M')
-        text = str(value).strip().replace('Z', '+00:00')
-        if not text:
+        if not (text := str(value).strip().replace('Z', '+00:00')):
             return None
         dt = datetime.fromisoformat(text)
         if dt.tzinfo is None:

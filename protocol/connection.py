@@ -307,8 +307,7 @@ class Connection:
         if not line:
             return False
 
-        raw = line.decode().strip()
-        if not raw:
+        if not (raw := line.decode().strip()):
             return True
 
         now = self._last_activity = loop_time()

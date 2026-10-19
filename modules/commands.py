@@ -68,8 +68,7 @@ def _pick_agent_command(window: sublime.Window, on_select: Callable) -> None:
     dict, or ``on_select(None)`` if the user cancels.
     """
     prune_stale_agents()
-    commands = settings().get('commands', [])
-    if not commands:
+    if not (commands := settings().get('commands', [])):
         sublime.error_message('No predefined commands found in settings')
         return
 
@@ -219,8 +218,7 @@ class AcpCommand(sublime_plugin.WindowCommand):
         """
         if cmd_item is None:
             return
-        cmd_str = cmd_item.get('cmd')
-        if not cmd_str:
+        if not (cmd_str := cmd_item.get('cmd')):
             sublime.error_message("ACP: agent entry is missing a 'cmd' value.")
             return
         cmd = [cmd_str] + cmd_item.get('args', [])
@@ -266,8 +264,7 @@ class AcpActionsCommand(sublime_plugin.WindowCommand):
     def run(self):
         """Show the quick panel of available actions."""
         actions = settings().get('actions') or []
-        titles = [a['title'] for a in actions if a.get('title')]
-        if not titles:
+        if not (titles := [a['title'] for a in actions if a.get('title')]):
             return
 
         def on_done(index):
@@ -425,8 +422,7 @@ class AcpStartCommand(sublime_plugin.WindowCommand):
         """
         if cmd_item is None:
             return
-        cmd_str = cmd_item.get('cmd')
-        if not cmd_str:
+        if not (cmd_str := cmd_item.get('cmd')):
             sublime.error_message("ACP: agent entry is missing a 'cmd' value.")
             return
         cmd = [cmd_str] + cmd_item.get('args', [])

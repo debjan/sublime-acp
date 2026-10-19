@@ -144,8 +144,7 @@ class DaemonState:
         fetch is authoritative anyway.
         """
         with self._lock:
-            sessions = self.sessions_cache
-            if not sessions:
+            if not (sessions := self.sessions_cache):
                 return False
             for s in sessions:
                 if isinstance(s, dict) and s.get('sessionId') == session_id:
@@ -1111,8 +1110,7 @@ def _make_session_info_updater(state):
             acp_log('daemon', f'session_info_update for uncached sid={session_id}', window_id)
         # The agent's store is authoritative, so a locally set rename is void.
         state.patch_session(session_id, 'title_override', '')
-        cmd = state.get('agent_cmd')
-        if cmd:
+        if cmd := state.get('agent_cmd'):
             try:
                 cache.set_session_title(_cache_dir(), cmd, session_id, None)
             except Exception as exc:

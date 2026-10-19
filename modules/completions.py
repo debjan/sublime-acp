@@ -119,8 +119,7 @@ def complete_slash_commands(view, prefix):
 
     completions = []
     for c in slash_commands:
-        name = c.get('name')
-        if not name:
+        if not (name := c.get('name')):
             continue
         if prefix and not name.lower().startswith(prefix.lower()):
             continue
@@ -156,8 +155,7 @@ def complete_at_files(window, prefix, settings):
         return None
 
     if project_files := file_walker.load_project_files_for_window(window, settings):
-        completions = _build_completions(project_files, prefix)
-        if not completions:
+        if not (completions := _build_completions(project_files, prefix)):
             return None
         return (completions, _INHIBIT)
 

@@ -48,34 +48,80 @@ def dismiss_elicitation_prompt(window_id: int) -> None:
     ui.on_main(_dismiss)
 
 
+def _const_options(variants: Any) -> list[tuple[Any, str, str]] | None:
+    """Return options for an ``oneOf``/``anyOf`` list of const variants, or ``None``.
+
+    Every variant must be a dict carrying ``const``; ``title``/``name`` labels
+    the option and ``description`` annotates it.
+    """
+    if not isinstance(variants, list) or not all(
+        isinstance(v, dict) and 'const' in v for v in variants
+    ):
+        return None
+    return [
+        (v['const'], str(v.get('title') or v.get('name') or v['const']),
+         str(v.get('description') or ''))
+        for v in variants
+    ]
+
+
 def _enum_options(spec: dict) -> list[tuple[Any, str, str]] | None:
     """Return ``(value, label, description)`` options, or ``None`` for free text."""
     if isinstance(spec.get('enum'), list):
         return [(v, str(v), '') for v in spec['enum']]
     for key in ('oneOf', 'anyOf'):
-        variants = spec.get(key)
-        if isinstance(variants, list) and all(
-            isinstance(v, dict) and 'const' in v for v in variants
-        ):
-            return [
-                (v['const'], str(v.get('title') or v.get('name') or v['const']),
-                 str(v.get('description') or ''))
-                for v in variants
-            ]
+        options = _const_options(spec.get(key))
+        if options is not None:
+            return options
     if spec.get('type') == 'boolean':
         return [(True, 'True', ''), (False, 'False', '')]
     return None
 
 
+def _multi_options(spec: dict) -> list[tuple[Any, str, str]] | None:
+    """Return ``(value, label, description)`` options for an array property.
+
+    Multi-select properties carry their choices under ``items``, either as a
+    plain ``enum`` or as titled ``oneOf``/``anyOf`` variants; anything else -
+    including non-array types - returns ``None``.
+    """
+    if spec.get('type') != 'array':
+        return None
+    items = spec.get('items')
+    if not isinstance(items, dict):
+        return None
+    if isinstance(items.get('enum'), list):
+        return [(v, str(v), '') for v in items['enum']]
+    for key in ('oneOf', 'anyOf'):
+        options = _const_options(items.get(key))
+        if options is not None:
+            return options
+    return None
+
+
+def _row_kind(checked: bool | None, ready: bool = True) -> tuple:
+    """Return the quick-panel gutter ``kind`` for a checklist row."""
+    ambiguous = getattr(sublime, 'KIND_ID_AMBIGUOUS', 0)
+    if checked is None:
+        if ready:
+            return (getattr(sublime, 'KIND_ID_COLOR_YELLOWISH', ambiguous), '→', '')
+        return (getattr(sublime, 'KIND_ID_COLOR_REDISH', ambiguous), '→', '')
+    if checked:
+        return (getattr(sublime, 'KIND_ID_COLOR_GREENISH', ambiguous), '✓', '')
+    return (ambiguous, '', '')
+
+
 def _show_choice(window_id: int, caption: str, labels: list, selected: int,
-                 on_done: Callable, shown: list | None = None) -> None:
+                 on_done: Callable, shown: list | None = None,
+                 flash: bool = True) -> None:
     """Show a quick panel with *labels* on the main thread."""
     if window_id not in [w.id() for w in sublime.windows()]:
         on_done(-1)
         return
     window = sublime.Window(window_id)
-    from . import broadcast
-    broadcast.flash_prompt(f'ACP: question - {caption}', window_id)
+    if flash:
+        from . import broadcast
+        broadcast.flash_prompt(f'ACP: question - {caption}', window_id)
     if shown is not None:
         shown.append(True)
     window.show_quick_panel(labels, on_done, selected_index=selected, placeholder=caption)
@@ -94,13 +140,24 @@ def _show_input(window_id: int, caption: str, initial: str,
 
 
 async def _ask_choice(window_id: int, caption: str, options: list[tuple[Any, str, str]],
-                      default: Any, loop: Any, remaining: float | None) -> Any:
-    """Prompt a single enum/boolean field via quick panel."""
+                      default: Any, loop: Any, remaining: float | None,
+                      multi: bool = False, min_items: int = 0,
+                      max_items: int | None = None) -> Any:
+    """Prompt an enum, boolean, or array field via quick panel."""
     lock = _lock_for_window(window_id)
     async with lock:
         event = asyncio.Event()
         result: list = []
-        labels: list = []
+        chosen: set = set()
+        if multi and isinstance(default, list):
+            chosen = {i for i, (value, _, _) in enumerate(options) if value in default}
+            if max_items is not None and len(chosen) > max_items:
+                acp_log(
+                    'elicitation',
+                    f'default preselects {len(chosen)} rows - keeping the first {max_items}',
+                    window_id,
+                )
+                chosen = set(sorted(chosen)[:max_items])
 
         def _on_done(index: int) -> None:
             def _set():
@@ -141,17 +198,35 @@ async def _ask_choice(window_id: int, caption: str, options: list[tuple[Any, str
                 return _CANCELLED
 
             selected = 0
-            quick_items: list = []
-            quick_panel_item = getattr(sublime, 'QuickPanelItem', None)
-            for i, (_, label, desc) in enumerate(options):
-                if default is not None and options[i][0] == default:
+            for i, (value, _, _) in enumerate(options):
+                if not multi and default is not None and value == default:
                     selected = i
-                short = ui.truncate_middle(desc) if desc else ui.truncate_middle(caption)
-                if quick_panel_item is not None:
-                    quick_items.append(quick_panel_item(label, details=short))
-                else:
-                    quick_items.append(label)
-            labels = quick_items
+            def _acceptable() -> bool:
+                """Return ``True`` when the picks satisfy the ``minItems``/``maxItems`` bounds."""
+                if len(chosen) < min_items:
+                    return False
+                return max_items is None or len(chosen) <= max_items
+
+            def _labels() -> list:
+                """Build the panel rows, gutter marks and ``Done`` row included."""
+                rows: list = []
+                for i, (_, label, desc) in enumerate(options):
+                    short = ui.truncate_middle(desc) if desc else ui.truncate_middle(caption)
+                    if multi:
+                        rows.append(sublime.QuickPanelItem(
+                            label, details=short, kind=_row_kind(i in chosen)))
+                    else:
+                        rows.append(sublime.QuickPanelItem(label, details=short))
+                if not multi:
+                    return rows
+                done = f'Done ({len(chosen)} selected)'
+                if min_items - len(chosen) > 0:
+                    done = f'Done (choose {min_items - len(chosen)} more)'
+                rows.append(sublime.QuickPanelItem(
+                    done, details=ui.truncate_middle(caption),
+                    kind=_row_kind(None, ready=_acceptable()),
+                ))
+                return rows
 
             while True:
                 if deadline is not None:
@@ -159,10 +234,12 @@ async def _ask_choice(window_id: int, caption: str, options: list[tuple[Any, str
                     if remaining <= 0:
                         acp_log('elicitation', 'whole-form timeout exceeded - cancelling', window_id)
                         return _CANCELLED
-                def _show() -> None:
+                labels = _labels()
+
+                def _show(labels=labels, selected=selected) -> None:
                     _show_choice(
                         window_id, ui.truncate_middle(caption), labels, selected,
-                        _on_done, shown=panel_shown,
+                        _on_done, shown=panel_shown, flash=not panel_shown,
                     )
 
                 ui.on_main(_show)
@@ -188,7 +265,25 @@ async def _ask_choice(window_id: int, caption: str, options: list[tuple[Any, str
                     if event.is_set():
                         return _CANCELLED
                     continue
-                break
+                if not multi or not result:
+                    break
+                index = result[0]
+                if index == len(options) and _acceptable():
+                    break
+                event.clear()
+                result.clear()
+                if index == -1:
+                    return _CANCELLED
+                if index == len(options):
+                    acp_log('elicitation', f'{min_items} selections required - keeping form open', window_id)
+                    continue
+                if index in chosen:
+                    chosen.discard(index)
+                elif max_items is None or len(chosen) < max_items:
+                    chosen.add(index)
+                else:
+                    acp_log('elicitation', f'at most {max_items} selections - ignoring toggle', window_id)
+                selected = index
         except TIMEOUT_EXCEPTIONS:
             acp_log('elicitation', 'choice timed out - cancelling', window_id)
             return _CANCELLED
@@ -196,6 +291,10 @@ async def _ask_choice(window_id: int, caption: str, options: list[tuple[Any, str
             if _active_elicitations.get(window_id) is _resolve:
                 del _active_elicitations[window_id]
 
+        if multi:
+            if result and result[0] == len(options):
+                return [options[i][0] for i in sorted(chosen)]
+            return _CANCELLED
         if not result or result[0] == -1:
             return _CANCELLED
         return options[result[0]][0]
@@ -288,11 +387,17 @@ async def resolve_elicitation(
     """Resolve an ``elicitation/create`` form request to a result dict.
 
     Collects each property in *requestedSchema* via sequential native
-    panels sharing one whole-form deadline. Any dismiss, validation
-    failure, or timeout cancels the whole form. An optional ``<name>_custom``
-    text field is skipped (omitted from the result) when its sibling
-    ``<name>`` field already resolved to anything but ``'custom'`` - picking
-    a real option makes the free-text follow-up meaningless.
+    panels sharing one whole-form deadline: enum/boolean fields resolve on a
+    quick-panel row, ``array`` fields toggle rows and confirm via the panel's
+    ``Done`` row, and remaining primitives take free text. Any dismiss,
+    validation failure, or timeout cancels the whole form. An optional
+    ``<name>_custom`` text field is skipped (omitted from the result) when its
+    sibling ``<name>`` field already resolved to anything but ``'custom'`` -
+    picking a real option makes the free-text follow-up meaningless.
+
+    A required array field needs at least one selection unless its schema
+    states ``minItems`` explicitly; ``minItems``/``maxItems`` are enforced
+    either way.
 
     Args:
         params: The ``elicitation/create`` params dict.
@@ -345,9 +450,11 @@ async def resolve_elicitation(
         if not isinstance(spec, dict):
             acp_log('elicitation', f'unsupported schema for {key!r} - cancelling', window_id)
             return {'action': 'cancel'}
+        multi_options = _multi_options(spec)
+        options = multi_options if multi_options is not None else _enum_options(spec)
         if (
-            spec.get('type') not in (None, 'string', 'number', 'integer', 'boolean')
-            and _enum_options(spec) is None
+            options is None
+            and spec.get('type') not in (None, 'string', 'number', 'integer', 'boolean')
         ):
             acp_log('elicitation', f'unsupported schema for {key!r} - cancelling', window_id)
             return {'action': 'cancel'}
@@ -358,16 +465,25 @@ async def resolve_elicitation(
             acp_log('elicitation', 'whole-form timeout exceeded - cancelling', window_id)
             return {'action': 'cancel'}
 
-        options = _enum_options(spec)
-        if options is not None:
+        if multi_options is not None:
+            raw_min = spec.get('minItems')
+            min_items = raw_min if isinstance(raw_min, int) else (1 if key in required else 0)
+            raw_max = spec.get('maxItems')
+            max_items = raw_max if isinstance(raw_max, int) else None
+            acp_log('elicitation', f'prompting multi-choice: {key!r} ({len(multi_options)} options)', window_id)
+            value = await _ask_choice(
+                window_id, caption, multi_options, spec.get('default'), running, remaining,
+                multi=True, min_items=min_items, max_items=max_items,
+            )
+        elif options is not None:
             acp_log('elicitation', f'prompting choice: {key!r} ({len(options)} options)', window_id)
-            value = await _ask_choice(window_id, caption, options, spec.get('default'), loop, remaining)
+            value = await _ask_choice(window_id, caption, options, spec.get('default'), running, remaining)
         else:
             initial = str(spec.get('default') or '')
             if spec.get('description'):
                 caption = f'{caption}: {spec["description"]}'
             acp_log('elicitation', f'prompting text: {key!r}', window_id)
-            value = await _ask_text(window_id, caption, initial, loop, remaining)
+            value = await _ask_text(window_id, caption, initial, running, remaining)
             if value is _CANCELLED:
                 pass
             elif isinstance(value, str) and value == '' and spec.get('default') is not None:

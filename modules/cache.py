@@ -278,8 +278,7 @@ def allowed_keys_for_commands(commands: list | None) -> set[str]:
     for item in commands or []:
         if not isinstance(item, dict):
             continue
-        cmd_str = item.get('cmd')
-        if not cmd_str:
+        if not (cmd_str := item.get('cmd')):
             continue
         cmd = [cmd_str] + list(item.get('args') or [])
         key = agent_key(cmd)

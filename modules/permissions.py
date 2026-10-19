@@ -125,9 +125,8 @@ def _show_permission_prompt(params: dict, on_done: Callable, window_id: int,
     tool_call = params.get('toolCall', {})
     title = tool_call.get('title', 'Unknown operation')
     kind = tool_call.get('kind', '')
-    options = params.get('options', [])
 
-    if not options:
+    if not (options := params.get('options', [])):
         on_done(None)
         return
 
@@ -151,14 +150,10 @@ def _show_permission_prompt(params: dict, on_done: Callable, window_id: int,
 
     broadcast.flash_prompt(f'ACP: permission needed - {short_title}', window_id)
 
-    quick_panel_item = getattr(sublime, 'QuickPanelItem', None)
-    if quick_panel_item is not None:
-        items = [
-            quick_panel_item(name, details=short_title, annotation=str(kind))
-            for name in names
-        ]
-    else:  # pragma: no cover - older Sublime without QuickPanelItem
-        items = [f'{name} - {short_title}' for name in names]
+    items = [
+        sublime.QuickPanelItem(name, details=short_title, annotation=str(kind))
+        for name in names
+    ]
 
     if shown is not None:
         shown.append(True)

@@ -94,8 +94,7 @@ def classify_gitignore_line(raw_line):
         ``None`` to skip the line, or ``('pattern', pattern_str,
         is_dir_only)`` / ``('negate', pattern_str, is_dir_only)``.
     """
-    line = raw_line.rstrip('\n\r')
-    if not line:
+    if not (line := raw_line.rstrip('\n\r')):
         return None
 
     if is_negate := line.startswith('!'):
@@ -106,8 +105,7 @@ def classify_gitignore_line(raw_line):
     if line.startswith(('\\#', '\\!')):
         line = line[1:]
 
-    line = line.rstrip()
-    if not line:
+    if not (line := line.rstrip()):
         return None
 
     if line.startswith('/'):
@@ -136,8 +134,7 @@ def parse_gitignore(project_root):
     if not gitignore_path.is_file():
         return GitignoreRules(frozenset(), frozenset(), ())
 
-    lines = read_gitignore_lines(gitignore_path)
-    if not lines:
+    if not (lines := read_gitignore_lines(gitignore_path)):
         return GitignoreRules(frozenset(), frozenset(), ())
 
     ignored_dirs = set()

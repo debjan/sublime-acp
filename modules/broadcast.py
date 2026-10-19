@@ -124,6 +124,15 @@ def _flash_taskbar_window(window) -> bool:
         return False
 
 
+def _hidden_window_kwargs() -> dict:
+    """Return Windows-only ``subprocess`` kwargs that keep console windows hidden."""
+    import subprocess
+
+    if sys.platform == 'win32':
+        return {'creationflags': subprocess.CREATE_NO_WINDOW}
+    return {}
+
+
 def _notify_center(title, text) -> bool:
     """Post a Notification Center banner via osascript; True when posted."""
     import subprocess
@@ -135,7 +144,7 @@ def _notify_center(title, text) -> bool:
     try:
         subprocess.run(
             ['osascript', '-e', script],
-            capture_output=True, check=False, timeout=5,
+            capture_output=True, check=False, timeout=5, **_hidden_window_kwargs(),
         )
     except Exception:
         return False
@@ -152,7 +161,7 @@ def _notify_send(title, text) -> bool:
     try:
         subprocess.run(
             ['notify-send', str(title), str(text)],
-            capture_output=True, check=False, timeout=5,
+            capture_output=True, check=False, timeout=5, **_hidden_window_kwargs(),
         )
     except Exception:
         return False
