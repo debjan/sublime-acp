@@ -1250,6 +1250,7 @@ def _daemon_thread_main(
                                 'permission_prompt_timeout',
                                 PERMISSION_PROMPT_TIMEOUT,
                             ),
+                            agent_name=agent_name,
                         )
                     finally:
                         state.set(permission_pending=False)

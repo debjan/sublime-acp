@@ -652,8 +652,9 @@ async def _handle_agent_request(
     (auto-allowed by the default ``read*`` rule), writes use kind
     ``write_file`` (prompted in daemon mode, denied elsewhere unless
     auto-allowed). Denied fs operations receive a JSON-RPC error.
-    Elicitation without an interactive handler is cancelled (one-shot).
-    Unhandled methods return ``False``.
+    Elicitation requests for a mode we do not advertise are rejected with
+    ``-32602``; requests without an interactive handler are cancelled
+    (one-shot). Unhandled methods return ``False``.
     """
     try:
         if method == 'session/request_permission':
@@ -666,6 +667,16 @@ async def _handle_agent_request(
             )
             return True
         elif method == 'elicitation/create':
+            if not isinstance(params, dict):
+                await conn.respond_with_error(msg_id, -32602, 'Invalid elicitation params')
+                return True
+            elicit_mode = params.get('mode')
+            if elicit_mode is not None and elicit_mode != 'form':
+                acp_log('rpc', f'elicitation/create: unsupported mode {elicit_mode!r}')
+                await conn.respond_with_error(
+                    msg_id, -32602, f'Unsupported elicitation mode: {elicit_mode!r}',
+                )
+                return True
             result = await _resolve_elicitation(params, on_elicitation)
             await conn.respond_to_request(msg_id, result)
             return True
@@ -778,20 +789,7 @@ async def _resolve_elicitation(
     params: dict[str, Any],
     on_elicitation: Any | None,
 ) -> dict[str, Any]:
-    """Resolve an ``elicitation/create`` request to a result dict.
-
-    ``on_elicitation`` (wired by the daemon) collects the form
-    interactively; otherwise the request is cancelled (one-shot,
-    init phase, and probe have no interactive window).
-
-    Args:
-        params: An ``elicitation/create``-shaped params dict.
-        on_elicitation: Optional callable returning the result dict
-            (``{"action": ...}``) for interactive prompts.
-
-    Returns:
-        The elicitation result dict.
-    """
+    """Resolve an ``elicitation/create`` request to a result dict."""
     if on_elicitation:
         return await on_elicitation(params)
     return {'action': 'cancel'}
