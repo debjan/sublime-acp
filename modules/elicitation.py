@@ -108,6 +108,13 @@ def _skip_custom(key: str, required: bool, content: dict) -> bool:
     return isinstance(value, str) and value.strip().lower() != 'custom'
 
 
+def _prune_stale(content: dict[str, Any], required: list, window_id: int) -> None:
+    """Drop collected ``*_custom`` values whose sibling is no longer ``'custom'``"""
+    for stale in [k for k in content if _skip_custom(k, k in required, content)]:
+        acp_log('elicitation', f'dropping stale {stale!r} - sibling is not custom', window_id)
+        content.pop(stale)
+
+
 def _row_kind(checked: bool | None, ready: bool = True) -> tuple:
     """Return the quick-panel gutter ``kind`` for a checklist row."""
     ambiguous = getattr(sublime, 'KIND_ID_AMBIGUOUS', 0)
@@ -693,6 +700,10 @@ async def resolve_elicitation(
     states ``minItems`` explicitly; ``minItems``/``maxItems`` are enforced
     either way.
 
+    A form left with at most one visible field is accepted as soon as that
+    field is answered - the review panel would only repeat it - while forms
+    with two or more visible fields still go through review.
+
     Args:
         params: The ``elicitation/create`` params dict.
         window_id: Owning window for panels; ``None`` auto-cancels
@@ -761,6 +772,12 @@ async def resolve_elicitation(
         if value is not _OMIT:
             content[key] = value
 
+    _prune_stale(content, required, window_id)
+    visible = _review_keys(content, props, required)
+    if len(visible) <= 1:
+        acp_log('elicitation', 'at most one visible field - accepting without review', window_id)
+        return {'action': 'accept', 'content': content}
+
     while True:
         decision = await _review_form(
             window_id, message, content, props, required, running, deadline,
@@ -772,9 +789,7 @@ async def resolve_elicitation(
             acp_log('elicitation', 'form declined', window_id)
             return {'action': 'decline'}
         if decision == 'accept':
-            for stale in [k for k in content if _skip_custom(k, k in required, content)]:
-                acp_log('elicitation', f'dropping stale {stale!r} - sibling is not custom', window_id)
-                content.pop(stale)
+            _prune_stale(content, required, window_id)
             return {'action': 'accept', 'content': content}
         _, key = decision
         value = await _prompt_field(
