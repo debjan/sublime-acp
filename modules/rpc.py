@@ -1391,6 +1391,7 @@ async def acp(
     auth: bool | None = None,
     thoughts_mode: str = 'enabled',
     show_tool_calls: bool = True,
+    diagnostics: dict[str, str] | None = None,
 ) -> tuple[str | None, str, str | None]:
     """Run a one-shot ACP prompt.
 
@@ -1418,6 +1419,8 @@ async def acp(
             as blockquotes; ``'disabled'`` drops thoughts entirely.
         show_tool_calls: When ``True`` (default), render each tool call that
             reaches a terminal status as a single-line markdown bullet.
+        diagnostics: Optional dict populated with the failure reason when init
+            fails (see :func:`_handle_init_phase`).
 
     Returns:
         ``(session_id, status, session_error)`` where *status* is one of
@@ -1428,7 +1431,8 @@ async def acp(
     """
     result = await spawn_and_init(cmd, env, model, session_id, cwd,
                                   permissions_config=permissions_config,
-                                  auth=auth)
+                                  auth=auth,
+                                  diagnostics=diagnostics)
     if result is None:
         return None, STATUS_ERROR, None
 

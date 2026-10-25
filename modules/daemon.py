@@ -283,6 +283,21 @@ def pop_init_diagnostics(window_id: int) -> dict[str, str]:
         return _init_diagnostics.pop(window_id, {})
 
 
+def init_failure_text(diagnostics: dict[str, str]) -> str:
+    """Return a suffix naming why agent init failed, or an empty string.
+
+    Authentication failures take priority over the follow-up error they cause,
+    because a rejected ``authenticate`` is what the user can act on (log in
+    through the agent's own CLI). The result starts with ``': '`` so callers can
+    append it to their own message.
+    """
+    if auth_error := diagnostics.get('auth_error'):
+        return f': authenticate failed - {auth_error} (log in with the agent CLI)'
+    if error := diagnostics.get('error'):
+        return f': {error}'
+    return ''
+
+
 def any_running() -> bool:
     with _registry_lock:
         return any(s.is_running() for s in _daemon_registry.values())
@@ -757,6 +772,7 @@ def _worker_thread(
     async def async_wrapper():
         current_env = _build_env(env)
         tool_calls_mode = settings.get('tool_calls', TOOL_CALLS_DEFAULT) if settings else TOOL_CALLS_DEFAULT
+        init_diagnostics: dict[str, str] = {}
 
         result_session_id, status, session_error = await acp(
             cmd=cmd,
@@ -772,17 +788,20 @@ def _worker_thread(
             auth=auth,
             thoughts_mode=settings.get('thoughts', 'enabled') if settings else 'enabled',
             show_tool_calls=tool_calls_mode == 'enabled',
+            diagnostics=init_diagnostics,
         )
         if status == STATUS_ERROR or result_session_id is None:
+            reason = init_failure_text(init_diagnostics)
+            prefix = (
+                'Could not resume previous session'
+                if session_id else 'Could not start session'
+            )
+            on_chunk(
+                f'\n**[{prefix}{reason}]**\n' if reason
+                else f'\n**[{prefix}, see console]**\n'
+            )
             if session_id:
-                on_chunk(
-                    '\n**[Could not resume previous session, see console]**\n'
-                )
                 _clear_agent_session_id(cmd)
-            else:
-                on_chunk(
-                    '\n**[Could not start session, see console]**\n'
-                )
         else:
             if session_id and status in (STATUS_RESUMED, STATUS_LOADED):
                 on_chunk(f'\n*[Resumed session: {session_id}]*\n\n')
