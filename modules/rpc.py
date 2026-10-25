@@ -530,12 +530,17 @@ async def _handle_init_phase(
     workspace_root: str | None = None,
     permissions_config: dict | None = None,
     auth: bool | None = None,
+    diagnostics: dict[str, str] | None = None,
 ) -> dict[str, Any] | None:
     """Run the ACP initialization phase with the agent.
 
     Sends ``initialize``, optionally authenticates, resolves a session (resume,
     load, or new), and optionally sets the model. Installs request and
     notification callbacks to handle agent requests during init.
+
+    Authentication is best effort: an agent may advertise a method it does not
+    implement (``-32601``) or only supports an interactive terminal login, so a
+    failure is logged and recorded in *diagnostics* instead of aborting init.
     """
     ws_root = workspace_root or cwd or os.getcwd()
 
@@ -563,17 +568,24 @@ async def _handle_init_phase(
 
         auth_methods = [
             m for m in result.get('authMethods', []) or []
-            if isinstance(m, dict) and m.get('type', 'agent') != 'terminal'
+            if isinstance(m, dict) and m.get('id') and m.get('type', 'agent') == 'agent'
         ]
         if auth_methods:
             if auth is False:
                 acp_log('rpc', '_handle_init_phase: auth=False, skipping authentication')
             else:
-                acp_log('rpc', '_handle_init_phase: authenticating')
-                await conn.send_request('authenticate', {
-                    'methodId': auth_methods[0]['id'],
-                })
-                acp_log('rpc', '_handle_init_phase: authentication done')
+                method_id = auth_methods[0]['id']
+                acp_log('rpc', f'_handle_init_phase: authenticating with {method_id!r}')
+                try:
+                    await conn.send_request('authenticate', {'methodId': method_id})
+                    acp_log('rpc', '_handle_init_phase: authentication done')
+                except ACPError as exc:
+                    acp_log(
+                        'rpc',
+                        f'_handle_init_phase: authentication failed: {exc} - continuing',
+                    )
+                    if diagnostics is not None:
+                        diagnostics['auth_error'] = str(exc)
         elif result.get('authMethods'):
             acp_log('rpc', '_handle_init_phase: skipping terminal-only authMethods')
 
@@ -583,6 +595,8 @@ async def _handle_init_phase(
         )
         if resolved_session_id is None:
             acp_log('rpc', '_handle_init_phase: session resolution returned None')
+            if diagnostics is not None:
+                diagnostics['error'] = 'agent did not return a session id'
             return None
         acp_log('rpc', f'_handle_init_phase: session resolved: sid={resolved_session_id}, opened_via={opened_via}')
 
@@ -629,6 +643,8 @@ async def _handle_init_phase(
 
     except _ACP_TRANSPORT as exc:
         acp_log('rpc', f'_handle_init_phase: init failed: {exc}')
+        if diagnostics is not None:
+            diagnostics['error'] = str(exc)
         return None
 
 
@@ -940,6 +956,7 @@ async def spawn_and_init(
     cwd: str | None = None,
     permissions_config: dict | None = None,
     auth: bool | None = None,
+    diagnostics: dict[str, str] | None = None,
 ) -> tuple[asyncio.subprocess.Process, Connection, dict] | None:
     """Spawn agent subprocess and run the init phase.
 
@@ -962,6 +979,8 @@ async def spawn_and_init(
         auth: Override authentication behavior: ``False`` skips auth
             entirely, ``None``/``True`` authenticates when the agent offers
             auth methods.
+        diagnostics: Optional dict populated with the failure reason when init
+            fails (see :func:`_handle_init_phase`).
 
     Returns:
         ``(proc, conn, init_result)`` on success, or ``None`` on init failure.
@@ -981,7 +1000,7 @@ async def spawn_and_init(
         init_result = await _handle_init_phase(
             conn, model, session_id, cwd,
             workspace_root=cwd, permissions_config=permissions_config,
-            auth=auth,
+            auth=auth, diagnostics=diagnostics,
         )
         if init_result is None:
             acp_log('rpc', 'spawn_and_init: init phase returned None - cleaning up')

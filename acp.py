@@ -1,6 +1,7 @@
 """ACP Sublime Text plugin - thin facade."""
 
 # ruff:noqa: F401 - command classes register with Sublime on import (side effects).
+
 from __future__ import annotations
 
 import os

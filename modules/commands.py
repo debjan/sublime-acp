@@ -33,6 +33,7 @@ from .daemon import (
     execute_prompt,
     get_state,
     is_unloading,
+    pop_init_diagnostics,
     set_state,
 )
 from .daemon_sessions import refresh_session_cache
@@ -46,6 +47,15 @@ def _find_action_prompt(action: str) -> str | None:
         if a.get('title') == action:
             return a.get('prompt')
     return None
+
+
+def _init_failure_text(diagnostics: dict[str, str]) -> str:
+    """Return a status-bar suffix naming why agent init failed, or ``''``."""
+    if auth_error := diagnostics.get('auth_error'):
+        return f': authenticate failed - {auth_error} (log in with the agent CLI)'
+    if error := diagnostics.get('error'):
+        return f': {error}'
+    return ''
 
 
 def _daemon_running(window_id: int) -> bool:
@@ -476,10 +486,12 @@ class AcpStartCommand(sublime_plugin.WindowCommand):
         daemon_window = view.window()
 
         def on_done():
+            diagnostics = pop_init_diagnostics(window_id)
             state = get_state(window_id)
             if state is None or not state.is_running():
-                acp_log('daemon_session', f'init failed for "{agent_name}" - no running daemon', window_id)
-                broadcast.set_broadcast_status(STATUS_KEY_DAEMON, f'✗ Failed to initialize agent "{agent_name}"', daemon_window)
+                reason = _init_failure_text(diagnostics)
+                acp_log('daemon_session', f'init failed for "{agent_name}" - no running daemon{reason}', window_id)
+                broadcast.set_broadcast_status(STATUS_KEY_DAEMON, f'✗ Failed to initialize agent "{agent_name}"{reason}', daemon_window)
                 ui.on_main(lambda: broadcast.erase_broadcast_status(STATUS_KEY_DAEMON, daemon_window), 5000)
                 return
 

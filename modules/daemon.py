@@ -81,6 +81,7 @@ _ACP_TRANSPORT = (ACPError, *TIMEOUT_EXCEPTIONS, ConnectionError)
 
 _daemon_registry: dict[int, DaemonState] = {}
 _registry_lock = threading.Lock()
+_init_diagnostics: dict[int, dict[str, str]] = {}
 
 
 class DaemonState:
@@ -266,6 +267,20 @@ def set_state(window_id: int, state: DaemonState) -> None:
 def remove_state(window_id: int) -> None:
     with _registry_lock:
         _daemon_registry.pop(window_id, None)
+
+
+def set_init_diagnostics(window_id: int, diagnostics: dict[str, str]) -> None:
+    """Record init failure *diagnostics* for *window_id* (empty is a no-op)."""
+    if not diagnostics:
+        return
+    with _registry_lock:
+        _init_diagnostics[window_id] = dict(diagnostics)
+
+
+def pop_init_diagnostics(window_id: int) -> dict[str, str]:
+    """Remove and return the recorded init failure diagnostics for *window_id*."""
+    with _registry_lock:
+        return _init_diagnostics.pop(window_id, {})
 
 
 def any_running() -> bool:
@@ -1174,12 +1189,15 @@ def _daemon_thread_main(
     async def _wrapper():
         current_env = _build_env(env)
         proc = conn = None
+        init_diagnostics: dict[str, str] = {}
         acp_log('daemon_session', 'calling spawn_and_init()')
         result = await spawn_and_init(cmd, current_env, model, None, work_dir,
                                        permissions_config=permissions_config,
-                                       auth=auth)
+                                       auth=auth,
+                                       diagnostics=init_diagnostics)
         if result is None:
             acp_log('daemon_session', 'spawn_and_init returned None - init failed')
+            set_init_diagnostics(window_id, init_diagnostics)
             return None, 'error'
         proc, conn, init_result = result
         try:
