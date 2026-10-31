@@ -25,6 +25,7 @@ from .daemon import (
     _apply_switched_config,
     _build_env,
     _cache_dir,
+    _ensure_output_view,
     _extract_config_update,
     _make_commands_updater,
     _make_session_info_updater,
@@ -206,9 +207,18 @@ def _submit_daemon_task(loop, task_factory: Callable, on_done: Callable | None):
         return None
 
 
+def _ensure_session_output_view(state):
+    """Return the session output view, recreating it after the tab was closed."""
+    window = _window_for_state(state)
+    if window is None:
+        return state.get('output_view')
+    return _ensure_output_view(window, state, state.get('agent_name') or 'agent')
+
+
 def _finish_session_change(state, cmd, sid, ok, error, success_view, success_status,
                            fail_view, fail_status, on_done, replay_text=None,
                            session_prompt_pending: bool | None = None) -> None:
+    output_view = _ensure_session_output_view(state)
     if ok:
         acp_log('session_change', f'ok: sid={sid}', state.get('window_id'))
         _update_agent_session_id(cmd, sid)
@@ -220,7 +230,6 @@ def _finish_session_change(state, cmd, sid, ok, error, success_view, success_sta
         if session_prompt_pending is not None:
             state.set(session_prompt_pending=session_prompt_pending)
         refresh_session_cache(state.get('window_id'))
-        output_view = state.get('output_view')
         if output_view is not None:
             if replay_text:
                 ui.replace_output_view(output_view, success_view(sid) + replay_text)
@@ -231,7 +240,6 @@ def _finish_session_change(state, cmd, sid, ok, error, success_view, success_sta
         sublime.status_message(success_status(sid))
     else:
         acp_log('session_change', f'failed: {error}', state.get('window_id'))
-        output_view = state.get('output_view')
         if output_view is not None:
             ui.append_to_output_view(output_view, fail_view(error))
         sublime.status_message(fail_status(error))
