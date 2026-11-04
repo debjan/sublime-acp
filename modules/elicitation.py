@@ -108,10 +108,55 @@ def _skip_custom(key: str, required: bool, content: dict) -> bool:
     return isinstance(value, str) and value.strip().lower() != 'custom'
 
 
+def _describe_options(options: list[tuple[Any, str, str]], limit: int = 160) -> str:
+    """Return the option labels joined into one line for the debug log."""
+    return ui.truncate_middle(', '.join(label for _, label, _ in options), limit)
+
+
+def _label_for(options: list[tuple[Any, str, str]], value: Any) -> str:
+    """Return the display label matching *value*, or ``str(value)``."""
+    for candidate, label, _ in options:
+        if candidate == value:
+            return label
+    return str(value)
+
+
+def _log_answer(window_id: int, key: str,
+                options: list[tuple[Any, str, str]], value: Any) -> Any:
+    """Log the resolved answer for *key* and return *value* unchanged."""
+    if value is _CANCELLED:
+        acp_log('elicitation', f'answered {key!r}: cancelled', window_id)
+    elif value is _OMIT:
+        acp_log('elicitation', f'answered {key!r}: (omitted)', window_id)
+    elif isinstance(value, list):
+        labels = [_label_for(options, item) for item in value]
+        acp_log('elicitation', f'answered {key!r}: {labels!r}', window_id)
+    elif options:
+        acp_log('elicitation', f'answered {key!r}: {_label_for(options, value)!r}', window_id)
+    else:
+        acp_log('elicitation', f'answered {key!r}: {ui.truncate_middle(value)!r}', window_id)
+    return value
+
+
+def _describe_fields(props: dict[str, Any], ordered: list) -> str:
+    """Return ``key (Title)`` pairs for the form, shortened for the log."""
+    parts = []
+    for key in ordered:
+        spec = props.get(key)
+        title = spec.get('title') if isinstance(spec, dict) else None
+        parts.append(f'{key} ({title})' if title and title != key else key)
+    return ui.truncate_middle(', '.join(parts))
+
+
 def _prune_stale(content: dict[str, Any], required: list, window_id: int) -> None:
     """Drop collected ``*_custom`` values whose sibling is no longer ``'custom'``"""
     for stale in [k for k in content if _skip_custom(k, k in required, content)]:
-        acp_log('elicitation', f'dropping stale {stale!r} - sibling is not custom', window_id)
+        sibling = content.get(stale[:-len('_custom')])
+        acp_log(
+            'elicitation',
+            f'dropping stale {stale!r} - sibling is not custom ({sibling!r})',
+            window_id,
+        )
         content.pop(stale)
 
 
@@ -456,27 +501,49 @@ async def _prompt_field(
         min_items = raw_min if isinstance(raw_min, int) else (1 if required else 0)
         raw_max = spec.get('maxItems')
         max_items = raw_max if isinstance(raw_max, int) else None
-        acp_log('elicitation', f'prompting multi-choice: {key!r} ({len(multi_options)} options)', window_id)
-        return await _ask_choice(
-            window_id, caption, multi_options, default, loop, remaining,
-            multi=True, min_items=min_items, max_items=max_items,
+        acp_log(
+            'elicitation',
+            f'prompting multi-choice: {key!r} - {ui.truncate_middle(caption)} '
+            f'[{_describe_options(multi_options)}]',
+            window_id,
+        )
+        return _log_answer(
+            window_id, key, multi_options,
+            await _ask_choice(
+                window_id, caption, multi_options, default, loop, remaining,
+                multi=True, min_items=min_items, max_items=max_items,
+            ),
         )
     if options is not None:
-        acp_log('elicitation', f'prompting choice: {key!r} ({len(options)} options)', window_id)
-        return await _ask_choice(window_id, caption, options, default, loop, remaining)
+        acp_log(
+            'elicitation',
+            f'prompting choice: {key!r} - {ui.truncate_middle(caption)} '
+            f'[{_describe_options(options)}]',
+            window_id,
+        )
+        return _log_answer(
+            window_id, key, options,
+            await _ask_choice(window_id, caption, options, default, loop, remaining),
+        )
 
     initial = '' if default is None else str(default)
     if spec.get('description'):
         caption = f'{caption}: {spec["description"]}'
-    acp_log('elicitation', f'prompting text: {key!r}', window_id)
+    acp_log('elicitation', f'prompting text: {key!r} - {ui.truncate_middle(caption)}', window_id)
     value = await _ask_text(window_id, caption, initial, loop, remaining)
     if value is _CANCELLED:
-        return _CANCELLED
+        return _log_answer(window_id, key, [], _CANCELLED)
     if isinstance(value, str) and value == '' and not required:
-        return _OMIT
-    if isinstance(value, str):
-        return _coerce_value(value, spec)
-    return _CANCELLED
+        return _log_answer(window_id, key, [], _OMIT)
+    result = _coerce_value(value, spec) if isinstance(value, str) else _CANCELLED
+    if result is _CANCELLED:
+        acp_log(
+            'elicitation',
+            f'answered {key!r}: invalid value {ui.truncate_middle(value)!r}',
+            window_id,
+        )
+        return _CANCELLED
+    return _log_answer(window_id, key, [], result)
 
 
 def _review_keys(content: dict[str, Any], props: dict[str, Any],
@@ -673,11 +740,14 @@ async def _review_form(
             return _CANCELLED
         index = result[0]
         if index == 0:
+            acp_log('elicitation', 'review: send answers', window_id)
             return 'accept'
         if index == 1:
+            acp_log('elicitation', 'review: decline', window_id)
             return 'decline'
         offset = index - 2
         if 0 <= offset < len(keys):
+            acp_log('elicitation', f'review: edit {keys[offset]!r}', window_id)
             return ('edit', keys[offset])
         return _CANCELLED
 
@@ -742,6 +812,11 @@ async def resolve_elicitation(
     )
     required = schema.get('required') if isinstance(schema.get('required'), list) else []
     ordered = [k for k in required if k in props] + [k for k in props if k not in required]
+    acp_log(
+        'elicitation',
+        f'form {ui.truncate_middle(message)!r} - fields: {_describe_fields(props, ordered)}',
+        window_id,
+    )
 
     running = loop
     if running is None:
@@ -760,7 +835,12 @@ async def resolve_elicitation(
             acp_log('elicitation', f'unsupported schema for {key!r} - cancelling', window_id)
             return {'action': 'cancel'}
         if _skip_custom(key, is_required, content):
-            acp_log('elicitation', f'skipping {key!r} - sibling is not custom', window_id)
+            sibling = content.get(key[:-len('_custom')])
+            acp_log(
+                'elicitation',
+                f'skipping {key!r} - sibling is not custom ({sibling!r})',
+                window_id,
+            )
             continue
         value = await _prompt_field(
             window_id, message, key, spec, is_required, running, deadline,
@@ -775,7 +855,11 @@ async def resolve_elicitation(
     _prune_stale(content, required, window_id)
     visible = _review_keys(content, props, required)
     if len(visible) <= 1:
-        acp_log('elicitation', 'at most one visible field - accepting without review', window_id)
+        acp_log(
+            'elicitation',
+            f'at most one visible field - accepting without review: {ui.truncate_middle(repr(content))!r}',
+            window_id,
+        )
         return {'action': 'accept', 'content': content}
 
     while True:
