@@ -25,6 +25,7 @@ STATUS_KEY_USAGE = 'acp_usage'     # broadcast-status key for context usage
 MAX_HINT_LENGTH = 120              # max completion annotation chars (long hints break the popup)
 
 TURN_DIVIDER = '\n\n---\n\n'  # markdown divider between turns
+TURN_SIGNATURE_DEFAULT = True  # append an HTML comment with end time and duration
 
 DEFAULT_PERMISSIONS = {'auto_allow': ['read*'], 'auto_reject': [], 'sensitive_globs': ['.env', '*.pem', '*key*', 'secrets.*']}  # default auto-allow / auto-reject rules; sensitive reads always prompt
 DEFAULT_SENSITIVE_GLOBS = DEFAULT_PERMISSIONS['sensitive_globs']  # fnmatch globs (basename or full path) forcing a prompt for fs reads

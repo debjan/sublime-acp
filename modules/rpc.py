@@ -354,7 +354,10 @@ def _handle_session_update_notification(msg: dict) -> list:
 # because agents differ in which one they emit.
 
 _TOOL_CALL_DISCRIMINATORS = ('tool_call', 'tool_call_update')
-_TOOL_CALL_TERMINAL_ICONS = {'completed': '✓', 'failed': '✗'}
+_TOOL_CALL_TERMINAL_STYLES = {
+    'completed': ('[x]', '**'),
+    'failed': ('[ ]', '*'),
+}
 _TOOL_CALL_SUMMARY_LIMIT = 120
 
 
@@ -401,27 +404,30 @@ def _tool_display_text(value: str) -> str:
 
 
 def _format_tool_bullet(entry: dict) -> str:
-    """Format a tracked tool call *entry* as a single markdown bullet.
+    """Format a tracked tool call *entry* as a single markdown task item.
 
     Args:
         entry: Accumulated tool call fields: at least ``status``, plus any of
             ``kind``, ``title`` and ``content`` reported by the agent.
 
     Returns:
-        A single line such as ``- ✓ **read** `Read modules/rpc.py```. A failed
-        call appends a one-line error summary when the agent supplied one.
+        A single line such as ``- [x] **read** `Read modules/rpc.py```. A
+        failed call renders unchecked and italic, such as
+        ``- [ ] *execute* `pytest```, and appends a one-line error summary
+        when the agent supplied one.
     """
     status = entry.get('status') or ''
-    icon = _TOOL_CALL_TERMINAL_ICONS.get(status, '?')
+    marker, emphasis = _TOOL_CALL_TERMINAL_STYLES.get(status, ('[ ]', '*'))
     kind = entry.get('kind')
     kind = _tool_display_text(kind).replace('`', '') if isinstance(kind, str) else ''
     if not kind:
         kind = 'other'
     title = entry.get('title')
     title = _tool_display_text(title).replace('`', '') if isinstance(title, str) else ''
-    if not title:
-        title = kind
-    bullet = f'- {icon} **{kind}** `{title}`'
+    label = f'{emphasis}{kind}{emphasis}'
+    if title and title != kind:
+        label = f'{label} `{title}`'
+    bullet = f'- {marker} {label}'
     if status == 'failed' and (summary := _tool_call_error_summary(entry.get('content'))):
         bullet = f'{bullet} - {_tool_display_text(summary)}'
     return bullet
@@ -1061,8 +1067,8 @@ def _consume_tool_call(state: _StreamState, params: dict) -> str | None:
         params: The notification params containing the ``update`` dict.
 
     Returns:
-        A formatted markdown bullet when the call first reaches ``completed``
-        or ``failed``, otherwise ``None``.
+        A formatted markdown task item when the call first reaches
+        ``completed`` or ``failed``, otherwise ``None``.
     """
     update = params.get('update', {})
     if not isinstance(update, dict) or _tool_call_discriminator(update) is None:
@@ -1077,7 +1083,7 @@ def _consume_tool_call(state: _StreamState, params: dict) -> str | None:
             entry[field] = update[field]
 
     status = update.get('status')
-    if status not in _TOOL_CALL_TERMINAL_ICONS or entry.get('emitted'):
+    if status not in _TOOL_CALL_TERMINAL_STYLES or entry.get('emitted'):
         return None
     entry['emitted'] = True
     entry['status'] = status
@@ -1320,8 +1326,8 @@ async def send_prompt_and_stream(
             invoked when the agent sends a ``session_info_update``. An empty
             *title* means the agent cleared the title.
         show_tool_calls: When ``True`` (default), render each tool call that
-            reaches a terminal status as a single-line markdown bullet in the
-            stream. When ``False``, tool calls are not rendered.
+            reaches a terminal status as a single-line markdown task item in
+            the stream. When ``False``, tool calls are not rendered.
         on_elicitation: Optional callable returning the elicitation result
             dict for ``elicitation/create`` form requests. Absent means
             cancel every question.
@@ -1418,7 +1424,7 @@ async def acp(
         thoughts_mode: ``'enabled'`` (default) streams thoughts to *callback*
             as blockquotes; ``'disabled'`` drops thoughts entirely.
         show_tool_calls: When ``True`` (default), render each tool call that
-            reaches a terminal status as a single-line markdown bullet.
+            reaches a terminal status as a single-line markdown task item.
         diagnostics: Optional dict populated with the failure reason when init
             fails (see :func:`_handle_init_phase`).
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
+import time
 from pathlib import Path
 from typing import Any, Callable
 
@@ -11,12 +12,23 @@ import sublime
 
 from ..protocol import TIMEOUT_EXCEPTIONS, acp_log
 from . import broadcast
-from .config import SESSION_PROMPT, STATUS_KEY_DAEMON, TURN_DIVIDER, settings
+from .config import (
+    SESSION_PROMPT,
+    STATUS_KEY_DAEMON,
+    TURN_DIVIDER,
+    TURN_SIGNATURE_DEFAULT,
+    settings,
+)
 
 
 def dividers_enabled() -> bool:
     """Return whether turn dividers are enabled (``turn_dividers`` setting)."""
     return bool(settings().get('turn_dividers', True))
+
+
+def signature_enabled() -> bool:
+    """Return whether turn signatures are enabled (``turn_signature`` setting)."""
+    return bool(settings().get('turn_signature', TURN_SIGNATURE_DEFAULT))
 
 
 # Alias avoids a literal `sublime.set_timeout` call inside an `async def` body,
@@ -359,6 +371,59 @@ def append_turn_divider(view: sublime.View, enabled: bool | None = None) -> None
         enabled = dividers_enabled()
     if enabled:
         append_to_output_view(view, TURN_DIVIDER)
+
+
+def format_turn_signature(started: float) -> str:
+    """Format the turn-end HTML comment with end time and duration.
+
+    Args:
+        started: ``time.monotonic()`` timestamp captured when the turn began.
+
+    Returns:
+        A comment such as ``<!-- [14:32:07] Duration: 00:01:23 -->``.
+    """
+    elapsed = max(0, int(time.monotonic() - started))
+    hours, remainder = divmod(elapsed, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    return (
+        f'<!-- [{time.strftime("%H:%M:%S")}] '
+        f'Duration: {hours:02d}:{minutes:02d}:{seconds:02d} -->'
+    )
+
+
+def turn_end_text(started: float, signature: bool | None = None,
+                  divider: bool | None = None) -> str:
+    """Return the turn-end block: optional signature comment and divider.
+
+    Args:
+        started: ``time.monotonic()`` timestamp captured when the turn began.
+        signature: Whether to include the signature comment. Defaults to the
+            ``turn_signature`` setting.
+        divider: Whether to include the turn divider. Defaults to the
+            ``turn_dividers`` setting.
+
+    Returns:
+        Text with a blank line above and below the signature, suitable for
+        appending to the output view.
+    """
+    if signature is None:
+        signature = signature_enabled()
+    if divider is None:
+        divider = dividers_enabled()
+    text = f'\n\n{format_turn_signature(started)}' if signature else ''
+    if divider:
+        text += TURN_DIVIDER
+    elif text:
+        text += '\n'
+    return text
+
+
+def append_turn_end(view: sublime.View, started: float,
+                    signature: bool | None = None,
+                    divider: bool | None = None) -> None:
+    """Append the turn signature and divider to *view*."""
+    if text := turn_end_text(started, signature, divider):
+        append_to_output_view(view, text)
 
 
 def append_prompt_turn(view: sublime.View, prompt: str,

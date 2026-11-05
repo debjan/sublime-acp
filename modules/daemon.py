@@ -47,7 +47,7 @@ from .config import (
     STATUS_KEY_DAEMON,
     STATUS_KEY_USAGE,
     TOOL_CALLS_DEFAULT,
-    TURN_DIVIDER,
+    TURN_SIGNATURE_DEFAULT,
 )
 from .config import settings as load_settings
 from .elicitation import (
@@ -817,15 +817,17 @@ def _worker_thread(
     from ..protocol.log import set_log_window
 
     set_log_window(window_id)
+    turn_started = time.monotonic()
     try:
         loop.run_until_complete(async_wrapper())
     except Exception as exc:
         acp_log('worker', f'one-shot worker raised: {exc}', window_id)
         on_chunk(f'\n**[Agent Error]:** `{exc}`\n')
     finally:
+        signature = settings.get('turn_signature', TURN_SIGNATURE_DEFAULT) if settings is not None else TURN_SIGNATURE_DEFAULT
         dividers = settings.get('turn_dividers', True) if settings is not None else True
-        if dividers:
-            on_chunk(TURN_DIVIDER)
+        if turn_end := ui.turn_end_text(turn_started, signature=signature, divider=dividers):
+            on_chunk(turn_end)
         _safe_shutdown_loop(loop)
 
 # Idle timer
@@ -1295,6 +1297,7 @@ def _daemon_thread_main(
                 git_mode = git_summary.resolve_mode(settings.get('git_turn_summary', 'counts'))
                 git_base = await call_in_thread(git_summary.snapshot, work_dir) if git_mode != git_summary.GIT_SUMMARY_OFF else None
 
+                turn_started = time.monotonic()
                 ok = await send_prompt_and_stream(
                     conn, sid, prompt_text,
                     session_prompt if state.get('session_prompt_pending') else None,
@@ -1345,9 +1348,11 @@ def _daemon_thread_main(
                     ui.on_main(
                         lambda s=summary, ov=output_view: ui.append_to_output_view(ov, s),
                     )
-                ui.append_turn_divider(
+                ui.append_turn_end(
                     output_view,
-                    enabled=settings.get('turn_dividers', True),
+                    turn_started,
+                    signature=settings.get('turn_signature', TURN_SIGNATURE_DEFAULT),
+                    divider=settings.get('turn_dividers', True),
                 )
                 state.set(
                     is_busy=False, last_activity=time.monotonic(),

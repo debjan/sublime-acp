@@ -90,6 +90,11 @@
               "default": true,
               "description": "Append markdown dividers (---) after each user prompt and agent reply."
             },
+            "turn_signature": {
+              "type": "boolean",
+              "default": true,
+              "description": "Append an HTML comment at the end of each agent turn with the end time and duration, e.g. <!-- [14:32:07] Duration: 00:01:23 -->."
+            },
             "font_size": {
               "type": ["number", "null"],
               "default": null,
@@ -125,7 +130,7 @@
               "type": "string",
               "enum": ["enabled", "disabled"],
               "default": "enabled",
-              "description": "How agent tool call results are surfaced: 'enabled' renders each completed/failed tool call as a one-line markdown bullet, 'disabled' hides them."
+              "description": "How agent tool call results are surfaced: 'enabled' renders each completed/failed tool call as a one-line markdown task item, 'disabled' hides them."
             },
             "session_list_limit": {
               "type": "integer",

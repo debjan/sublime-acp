@@ -73,18 +73,20 @@ The `thoughts` setting controls how agent thinking chunks are surfaced:
 
 The `tool_calls` setting controls whether agent tool call results are surfaced in the output view:
 
-| Value        | Behavior                                                              |
-| ------------ | --------------------------------------------------------------------- |
-| `"enabled"`  | Each completed/failed tool call renders as a one-line markdown bullet |
-| `"disabled"` | Tool call results are not rendered                                    |
+| Value        | Behavior                                                                  |
+| ------------ | ------------------------------------------------------------------------- |
+| `"enabled"`  | Each completed/failed tool call renders as a one-line markdown task item  |
+| `"disabled"` | Tool call results are not rendered                                        |
 
-Bullets stream inline as the agent reports each tool finishing, for example `` - ✓ **read** `Read modules/rpc.py` ``. Failed calls use `✗` and append a one-line error summary. Non-terminal statuses are not shown.
+Task items stream inline as the agent reports each tool finishing, for example `` - [x] **read** `Read modules/rpc.py` ``. Failed calls render unchecked and italic, for example `` - [ ] *execute* `pytest` ``, and append a one-line error summary. Non-terminal statuses are not shown.
 
 ### Output view
 
-| Setting     | Default | Purpose                                                                              |
-| ----------- | ------- | ------------------------------------------------------------------------------------ |
-| `font_size` | `null`  | Font size (points) for the ACP scratch output views; `null`/unset = global font size |
+| Setting          | Default | Purpose                                                                                            |
+| ---------------- | ------- | -------------------------------------------------------------------------------------------------- |
+| `font_size`      | `null`  | Font size (points) for the ACP scratch output views; `null`/unset = global font size               |
+| `turn_dividers`  | `true`  | Append markdown dividers (`---`) after each agent turn                                             |
+| `turn_signature` | `true`  | Append an invisible `<!-- [HH:MM:SS] Duration: HH:MM:SS -->` comment at the end of each agent turn |
 
 ### Permissions
 

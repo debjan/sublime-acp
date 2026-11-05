@@ -30,8 +30,8 @@
         //     }
         // },
         // {
-        //     "title": "Kimi",
-        //     "cmd": "kimi",
+        //     "title": "DeepSeek",
+        //     "cmd": "dsh",
         //     "args": ["acp"],
         // },
         // {
@@ -72,6 +72,10 @@
     // Append markdown dividers (---) after each user prompt and agent reply
     "turn_dividers": true,
 
+    // Append an HTML comment at the end of each agent turn with the end time
+    // and duration, e.g. <!-- [14:32:07] Duration: 00:01:23 -->
+    "turn_signature": true,
+
     // Font size (points) applied to ACP scratch output views (null = global font size)
     "font_size": null,
 
@@ -91,7 +95,7 @@
     "thoughts": "enabled",
 
     // How agent tool call results are surfaced in the output view:
-    //   "enabled"  - each completed/failed tool call renders as a one-line markdown bullet (default)
+    //   "enabled"  - each completed/failed tool call renders as a one-line markdown task item (default)
     //   "disabled" - tool call results are not rendered
     "tool_calls": "enabled",
 
