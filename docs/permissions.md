@@ -59,10 +59,12 @@ The walker runs `os.walk` on a background thread, skipping:
 - anything matched by your project's `.gitignore` files (including `!` negation, `**` globs, per-segment directory matching), and
 - folders/extensions from the `ignore` setting (e.g. `node_modules`, `.pyc`).
 
+The `allow` setting overrides both filters: matching folders/patterns include their whole subtree, and matching extensions or file patterns re-include individual files.
+
 Results are cached per window with a TTL (`cache_ttl`, default 300 s); saving a file expires the cache so newly created files show up in `@` completions.
 
 ## Related docs
 
 - [daemon.md](daemon.md) - how permission prompts interact with the idle timer
-- [configuration.md](configuration.md) - the `permissions` and `ignore` settings
+- [configuration.md](configuration.md) - the `permissions`, `ignore`, and `allow` settings
 - [completions.md](completions.md) - how walked files feed `@` completions

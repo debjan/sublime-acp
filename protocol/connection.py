@@ -307,8 +307,7 @@ class Connection:
 
     async def read_one(self) -> bool:
         """Read one message from the stream and dispatch it."""
-        line = await self._reader.readline()
-        if not line:
+        if not (line := await self._reader.readline()):
             return False
 
         if not (raw := line.decode().strip()):

@@ -33,4 +33,4 @@ Sublime breaks completion prefixes at word separators (`:`, `/`, ...). To cope, 
 ## Related docs
 
 - [permissions.md](permissions.md) - gitignore-aware file walking behind `@`
-- [configuration.md](configuration.md) - `cache_ttl`, `ignore`, `actions`
+- [configuration.md](configuration.md) - `cache_ttl`, `ignore`, `allow`, `actions`

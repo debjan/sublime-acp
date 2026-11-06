@@ -71,6 +71,88 @@ class GitignoreRules:
         return result
 
 
+@dataclass(frozen=True)
+class AllowRules:
+    """Explicit patterns that re-include paths hidden from ``@`` completions.
+
+    Attributes:
+        dirs: Exact directory names; a match re-includes the directory and
+            everything beneath it.
+        extensions: Lower-case file extensions with a leading dot.
+        patterns: ``(pattern, is_dir_only)`` gitignore-style path patterns,
+            matched against every path segment.
+    """
+
+    dirs: frozenset[str]
+    extensions: frozenset[str]
+    patterns: tuple[tuple[str, bool], ...]
+
+    def matches(self, relative_path: str, *, is_dir: bool = False) -> bool:
+        """Check whether a path or one of its ancestors is explicitly allowed.
+
+        Every path segment is tested so an allowed directory re-includes its
+        descendants.
+
+        Args:
+            relative_path: Path relative to the project root.
+            is_dir: Whether the path itself is a directory.
+
+        Returns:
+            bool: ``True`` if any allow rule matches a path segment.
+        """
+        if not (self.dirs or self.extensions or self.patterns):
+            return False
+        parts = norm_path(relative_path).split('/')
+        for index, part in enumerate(parts):
+            segment_path = '/'.join(parts[:index + 1])
+            segment_is_dir = index < len(parts) - 1 or is_dir
+            if segment_is_dir and part in self.dirs:
+                return True
+            if not segment_is_dir and any(
+                part.lower().endswith(ext) for ext in self.extensions
+            ):
+                return True
+            for pattern, dir_only in self.patterns:
+                if dir_only and not segment_is_dir:
+                    continue
+                if _match_gitignore_pattern(pattern, segment_path):
+                    return True
+        return False
+
+
+def parse_allow_config(allow):
+    """Build :class:`AllowRules` from the ``allow`` setting.
+
+    Args:
+        allow: Mapping with optional ``folders``, ``extensions``, and
+            ``patterns`` lists, or ``None``.
+
+    Returns:
+        AllowRules: Empty rules when *allow* is missing or has no entries.
+    """
+    if not allow:
+        return AllowRules(frozenset(), frozenset(), ())
+
+    dirs = frozenset(
+        norm_path(name).strip('/') for name in allow.get('folders') or [] if name
+    )
+    extensions = frozenset(
+        ext if ext.startswith('.') else '.' + ext
+        for raw in allow.get('extensions') or []
+        if (ext := str(raw).strip().lower())
+    )
+
+    patterns = []
+    for raw in allow.get('patterns') or []:
+        if not (pattern := norm_path(raw).strip()):
+            continue
+        is_dir_only = pattern.endswith('/')
+        if pattern := pattern.strip('/'):
+            patterns.append((pattern, is_dir_only))
+
+    return AllowRules(dirs, extensions, tuple(patterns))
+
+
 def read_gitignore_lines(gitignore_path):
     """Read ``.gitignore`` lines, returning an empty list on error."""
     try:

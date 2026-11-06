@@ -55,6 +55,15 @@
         "folders": [".git", ".svn", ".hg", ".venv", "node_modules"],
         "extensions": [".pyc", ".pyo", ".pyd", ".so", ".dll", ".exe", ".o", ".a", ".lib", ".class"],
     },
+    // Re-include paths for autocompletion, overriding .gitignore and "ignore"
+    "allow": {
+        // Exact directory names; the whole subtree is included
+        "folders": [],
+        // File extensions, with or without a leading dot
+        "extensions": [],
+        // Gitignore-style globs; a trailing "/" matches directories only
+        "patterns": [],
+    },
     // Custom quick actions shown in the prompt panel
     "actions": [
         {

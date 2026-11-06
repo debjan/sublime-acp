@@ -489,8 +489,7 @@ def fork_daemon_session(window_id: int, session_id: str | None = None,
     if ctx is None:
         return
     state, conn, loop, cmd, _env, work_dir = ctx
-    source_id = session_id or state.get('session_id')
-    if not source_id:
+    if not (source_id := session_id or state.get('session_id')):
         sublime.status_message('ACP: No active session to fork')
         if on_done is not None:
             on_done(False, 'No active session')

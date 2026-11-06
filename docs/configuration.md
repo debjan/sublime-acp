@@ -113,6 +113,22 @@ Extra ignore rules for `@` path completions, applied on top of your `.gitignore`
 }
 ```
 
+Use `allow` to bring specific paths back into `@` completions. It overrides `.gitignore`, the `ignore` setting, and the hidden-file/folder filter:
+
+```jsonc
+"allow": {
+    "folders": ["build"],
+    "extensions": [".min.js"],
+    "patterns": [".env", "**/*.local"]
+}
+```
+
+- `folders` are exact directory names matched at any depth; a match includes the whole subtree.
+- `extensions` match file suffixes (a leading dot is optional).
+- `patterns` are gitignore-style globs matched against every path segment; a trailing `/` restricts a pattern to directories. Matching a directory includes its subtree.
+
+Files inside an ignored directory are only reachable when that directory (or one of its ancestors) is allowed too, because the walker prunes ignored directories before visiting their files.
+
 ### Debugging
 
 | Setting | Default | Purpose                                                                                                                 |
@@ -123,4 +139,4 @@ Extra ignore rules for `@` path completions, applied on top of your `.gitignore`
 
 - [daemon.md](daemon.md) - daemon lifecycle governed by `timeout`/`daemon_idle_timeout`
 - [permissions.md](permissions.md) - permission pipeline behind `auto_allow`/`auto_reject`
-- [completions.md](completions.md) - completions behind `cache_ttl`/`ignore`
+- [completions.md](completions.md) - completions behind `cache_ttl`/`ignore`/`allow`

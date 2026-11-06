@@ -33,8 +33,7 @@ def _apply_title_overrides(cmd: list | None, sessions: list) -> None:
     except Exception as exc:
         acp_log('switch_session', f'failed to load title overrides: {exc!r}')
         return
-    titles = cache.get_entry(agents, cmd).get('session_titles') or {}
-    if not titles:
+    if not (titles := cache.get_entry(agents, cmd).get('session_titles') or {}):
         return
     for s in sessions:
         if not isinstance(s, dict):
@@ -163,8 +162,7 @@ class AcpSwitchSessionCommand(sublime_plugin.WindowCommand):
         if index == 0:
             new_daemon_session(self.window.id(), on_done=self._on_switched)
             return
-        session_id = (self._sessions or [])[index - 1].get('sessionId')
-        if not session_id:
+        if not (session_id := (self._sessions or [])[index - 1].get('sessionId')):
             return
         switch_daemon_session(self.window.id(), session_id, on_done=self._on_switched)
 
@@ -257,8 +255,7 @@ class AcpForkSessionCommand(sublime_plugin.WindowCommand):
     def _on_pick(self, index):
         if index == -1:
             return
-        session_id = (self._sessions or [])[index].get('sessionId')
-        if not session_id:
+        if not (session_id := (self._sessions or [])[index].get('sessionId')):
             return
         self._fork(session_id)
 
