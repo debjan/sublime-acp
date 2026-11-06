@@ -49,7 +49,11 @@ class ACPError(Exception):
         self.code = code
         self.message = message
         self.data = data
-        super().__init__(f'[{code}] {message}')
+        detail = data.get('details') if isinstance(data, dict) else None
+        text = f'[{code}] {message}'
+        if isinstance(detail, str) and detail and detail not in message:
+            text = f'{text}: {detail}'
+        super().__init__(text)
 
 
 def _log_response_failure(task: asyncio.Task) -> None:

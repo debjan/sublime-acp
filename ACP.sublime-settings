@@ -30,8 +30,8 @@
         //     }
         // },
         // {
-        //     "title": "DeepSeek",
-        //     "cmd": "dsh",
+        //     "title": "Kimi",
+        //     "cmd": "kimi",
         //     "args": ["acp"],
         // },
         // {

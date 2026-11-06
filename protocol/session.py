@@ -122,6 +122,15 @@ async def resolve_session(
     return await new_session(conn, base_params)
 
 
+async def close_session(conn: Connection, session_id: str) -> None:
+    """Close *session_id* to release the agent-side resources it holds.
+
+    Closing keeps the session persisted (per the ACP capability contract), so
+    it can still be resumed later; only the active handle is released.
+    """
+    await conn.send_request('session/close', {'sessionId': session_id})
+
+
 async def load_session_with_replay(
     conn: Connection,
     session_id: str,

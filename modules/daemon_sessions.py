@@ -12,6 +12,7 @@ import sublime
 from ..protocol import (
     ACPError,
     acp_log,
+    close_session,
     fork_session,
     list_sessions,
     load_session_with_replay,
@@ -260,17 +261,49 @@ def switch_daemon_session(window_id: int, session_id: str,
     if ctx is None:
         return
     state, conn, loop, cmd, env, work_dir = ctx
+    if session_id == state.get('session_id'):
+        sublime.status_message('ACP: Already on this session')
+        if on_done is not None:
+            on_done(True)
+        return
 
     replay = bool(load_settings().get('session_replay_on_switch', False))
     thoughts_mode = load_settings().get('thoughts', 'enabled')
     show_tools = load_settings().get('tool_calls', TOOL_CALLS_DEFAULT) == 'enabled'
 
     async def _do_switch():
+        old_sid = state.get('session_id')
         state.set(is_busy=True)
         try:
             agent_caps = state.get('agent_caps')
             if not state.supports('resume_or_load'):
                 return False, 'Agent does not support session resume or load', None
+            replay_note = None
+            if replay and not state.supports('load'):
+                # ``session/resume`` never replays history (ACP contract), so
+                # say so instead of silently showing a bare switch line.
+                replay_note = (
+                    '\n*[History replay unavailable: this agent does not '
+                    'support `session/load`]*\n'
+                )
+                acp_log('switch_session', 'replay requested but agent has no session/load')
+
+            async def _close_previous() -> None:
+                """Release the agent-side handle on the session we leave.
+
+                Agents such as dsh hold an exclusive write handle per active
+                session, so leaving it open makes a later switch back fail.
+                """
+                if not old_sid or old_sid == session_id:
+                    return
+                if not (state.supports('close') and state.supports('resume')):
+                    return
+                try:
+                    await close_session(conn, old_sid)
+                    acp_log('switch_session', f'closed previous session {old_sid}')
+                except Exception as exc:
+                    acp_log('switch_session', f'close of {old_sid} failed ({exc!r})')
+
             # Full-history replay: session/load replays via session/update.
             if replay and state.supports('load'):
                 chunks: list[str] = []
@@ -332,6 +365,7 @@ def switch_daemon_session(window_id: int, session_id: str,
                         _make_usage_updater(state)(*usage_holder[-1])
                     _apply_switched_config(cmd, load_result, config_holder)
                     _refresh_daemon_status(state)
+                    await _close_previous()
                     return True, None, ''.join(chunks)
                 except _ACP_TRANSPORT as exc:
                     acp_log('switch_session', f'replay load failed ({exc!r}); falling back')
@@ -339,7 +373,8 @@ def switch_daemon_session(window_id: int, session_id: str,
                 _, resume_result = await _resume_on_conn(conn, agent_caps, session_id, work_dir)
                 _apply_switched_config(cmd, resume_result, None)
                 _refresh_daemon_status(state)
-                return True, None, None
+                await _close_previous()
+                return True, None, replay_note
             except _ACP_TRANSPORT as exc:
                 acp_log('switch_session', f'in-place resume failed ({exc!r}); reconnecting')
             try:
@@ -348,7 +383,7 @@ def switch_daemon_session(window_id: int, session_id: str,
                 )
                 if ok:
                     _refresh_daemon_status(state)
-                return ok, err, None
+                return ok, err, replay_note if ok else None
             except Exception as exc:
                 acp_log('switch_session', f'reconnect failed: {exc!r}')
                 return False, str(exc), None
