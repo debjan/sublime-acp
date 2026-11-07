@@ -267,23 +267,32 @@ def _flush_thought_buffer(thought_buf: list[str]) -> str:
 
 
 def _flush_thoughts(
-    thought_buf: list[str],
+    state: _StreamState,
     thoughts_mode: str,
     callback: Any | None,
 ) -> bool:
     """Emit buffered thoughts for the given mode; return True if any were emitted.
 
     ``'enabled'`` buffers thoughts into a blockquote delivered through
-    *callback* (or ``stdout``); ``'disabled'`` drops them entirely.
+    *callback* (or ``stdout``); ``'disabled'`` drops them entirely. Held-back
+    trailing newlines are emitted first, and a single newline separates the
+    quote from output that did not end on a line boundary.
     """
     if thoughts_mode == 'enabled':
-        if flushed := _flush_thought_buffer(thought_buf):
+        if flushed := _flush_thought_buffer(state.thought_buf):
+            prefix = state.pending_trailing
+            state.pending_trailing = ''
+            if not prefix and (state.last_was_tool or not state.at_line_start):
+                prefix = '\n'
+            text = prefix + flushed
             if callback:
-                callback(flushed)
+                callback(text)
             else:
-                sys.stdout.write(flushed)
-        return bool(flushed)
-    thought_buf.clear()
+                sys.stdout.write(text)
+            state.at_line_start = False
+            return True
+        return False
+    state.thought_buf.clear()
     return False
 
 
@@ -445,9 +454,38 @@ def _replay_text(update: dict) -> str:
     return str(content) if content else ''
 
 
+def _flush_replay_thoughts(
+    replay_state: _StreamState | None,
+    thoughts_mode: str,
+) -> str:
+    """Flush thoughts buffered during replay as a separated blockquote.
+
+    Returns ``''`` when no state is supplied or thoughts are disabled. The
+    result starts with a newline when the previous replay chunk did not end on
+    a line boundary, and ends with a blank line so the next block cannot
+    continue the quote.
+    """
+    if replay_state is None or thoughts_mode != 'enabled':
+        if replay_state is not None:
+            replay_state.thought_buf.clear()
+        return ''
+    if not (flushed := _flush_thought_buffer(replay_state.thought_buf)):
+        return ''
+    prefix = ''
+    if not replay_state.at_turn_start and (
+        replay_state.last_was_tool or not replay_state.at_line_start
+    ):
+        prefix = '\n'
+    replay_state.at_turn_start = False
+    replay_state.at_line_start = False
+    replay_state.last_was_tool = False
+    return f'{prefix}{flushed}\n\n'
+
+
 def format_replay_update(update: dict, thoughts_mode: str = 'enabled',
                          show_tool_calls: bool = True,
-                         tool_state: dict | None = None) -> str | None:
+                         tool_state: dict | None = None,
+                         replay_state: _StreamState | None = None) -> str | None:
     """Format one replayed ``session/update`` *update* as markdown.
 
     Args:
@@ -458,21 +496,37 @@ def format_replay_update(update: dict, thoughts_mode: str = 'enabled',
         tool_state: Mutable dict tracking partial tool calls by ID; a fresh
             one is used when omitted (callers should pass a shared dict so
             multi-part tool updates merge correctly).
+        replay_state: Optional state for buffering consecutive thought chunks
+            and tracking line boundaries. When supplied, thoughts are buffered
+            until the next visible block and separated from it; callers must
+            flush the tail with ``_flush_replay_thoughts``.
 
     Returns:
         A markdown string, or ``None`` when the update carries nothing to
-        display (usage/commands updates, dropped thoughts, non-terminal
-        tool updates).
+        display (usage/commands updates, dropped thoughts, buffered thoughts,
+        non-terminal tool updates).
     """
     if not isinstance(update, dict):
         return None
     kind = update.get('sessionUpdate', update.get('type', ''))
     if kind in ('user_message', 'user_message_chunk'):
         if text := _replay_text(update):
-            return f'\n> **User**: {text}\n'
+            prefix = _flush_replay_thoughts(replay_state, thoughts_mode) or '\n'
+            if replay_state is not None:
+                replay_state.at_turn_start = False
+                replay_state.at_line_start = True
+                replay_state.last_was_tool = False
+            return f'{prefix}> **User**: {text}\n'
         return None
     if kind in ('agent_message', 'agent_message_chunk'):
-        return _replay_text(update) or None
+        if not (text := _replay_text(update)):
+            return None
+        prefix = _flush_replay_thoughts(replay_state, thoughts_mode)
+        if replay_state is not None:
+            replay_state.at_turn_start = False
+            replay_state.at_line_start = text.endswith('\n')
+            replay_state.last_was_tool = False
+        return prefix + text
     if kind in ('agent_thought_chunk', 'thought'):
         if thoughts_mode == 'disabled':
             return None
@@ -483,16 +537,24 @@ def format_replay_update(update: dict, thoughts_mode: str = 'enabled',
             text = update.get('text', '') if isinstance(update.get('text'), str) else ''
         if not text.strip():
             return None
-        if thoughts_mode == 'enabled':
-            return _format_blockquote(text)
-        return None
+        if replay_state is not None:
+            replay_state.thought_buf.append(text)
+            return None
+        return _format_blockquote(text) + '\n\n'
     if kind in _TOOL_CALL_DISCRIMINATORS:
         if not show_tool_calls:
             return None
-        state = _StreamState()
-        state.tool_calls = tool_state if tool_state is not None else {}
-        if bullet := _consume_tool_call(state, {'update': update}):
-            return bullet + '\n'
+        tool_stream = _StreamState()
+        tool_stream.tool_calls = tool_state if tool_state is not None else {}
+        if bullet := _consume_tool_call(tool_stream, {'update': update}):
+            prefix = _flush_replay_thoughts(replay_state, thoughts_mode)
+            if replay_state is not None:
+                if not prefix and not replay_state.at_line_start:
+                    prefix = '\n'
+                replay_state.at_turn_start = False
+                replay_state.at_line_start = True
+                replay_state.last_was_tool = True
+            return prefix + bullet + '\n'
         return None
     return None
 
@@ -1026,17 +1088,18 @@ class _StreamState:
     def __init__(self) -> None:
         self.thought_buf: list[str] = []
         self.at_turn_start = True
+        self.at_line_start = True
         self.pending_trailing = ''
         self.tool_calls: dict[str, dict] = {}
         self.last_was_tool = False
 
 
 def _emit_text(state: _StreamState, chunk: str, thoughts_mode: str, callback: Any | None) -> None:
-    had_thoughts = _flush_thoughts(state.thought_buf, thoughts_mode, callback)
-    if state.last_was_tool:
+    had_thoughts = _flush_thoughts(state, thoughts_mode, callback)
+    if state.last_was_tool and not had_thoughts:
         chunk = '\n' + chunk
-    if thoughts_mode == 'enabled' and had_thoughts:
-        chunk = '\n' + chunk
+    if had_thoughts:
+        chunk = '\n\n' + chunk
         state.at_turn_start = False
     elif state.at_turn_start:
         if not (chunk := chunk.lstrip('\r\n')):
@@ -1053,6 +1116,7 @@ def _emit_text(state: _StreamState, chunk: str, thoughts_mode: str, callback: An
     else:
         sys.stdout.write(chunk)
         sys.stdout.flush()
+    state.at_line_start = False
 
 
 def _consume_tool_call(state: _StreamState, params: dict) -> str | None:
@@ -1100,14 +1164,18 @@ def _emit_tool_bullet(
 
     Flushes buffered thoughts first so thoughts stay in order, and discards
     the pending trailing newlines held back by ``_emit_text``. A new bullet
-    block is separated from preceding text by a blank line, while consecutive
-    bullets stay on adjacent lines.
+    block is separated from preceding text or thoughts by a blank line, while
+    consecutive bullets stay on adjacent lines.
     """
-    _flush_thoughts(state.thought_buf, thoughts_mode, callback)
+    had_thoughts = _flush_thoughts(state, thoughts_mode, callback)
     state.pending_trailing = ''
-    prefix = '' if state.at_turn_start or state.last_was_tool else '\n\n'
+    if had_thoughts:
+        prefix = '\n\n'
+    else:
+        prefix = '' if state.at_turn_start or state.last_was_tool else '\n\n'
     text = f'{prefix}{bullet}\n'
     state.at_turn_start = False
+    state.at_line_start = True
     state.last_was_tool = True
     if callback:
         callback(text)
@@ -1242,17 +1310,19 @@ def _flush_stream_tail(
     flushed = ''
     if thoughts_mode == 'enabled':
         flushed = _flush_thought_buffer(state.thought_buf)
+        if flushed and not state.at_line_start and not state.pending_trailing:
+            flushed = '\n' + flushed
     texts = _handle_prompt_result({'result': result})
     all_text = '\n'.join(texts)
     if thoughts_mode == 'enabled' and flushed and all_text:
-        all_text = flushed + '\n' + all_text
+        all_text = flushed + '\n\n' + all_text
     elif thoughts_mode == 'enabled' and flushed:
         all_text = flushed
     if state.pending_trailing and all_text:
         all_text = state.pending_trailing + all_text
     state.pending_trailing = ''
     if state.last_was_tool and all_text:
-        all_text = '\n\n' + all_text
+        all_text = ('\n' if flushed else '\n\n') + all_text
     if state.at_turn_start:
         all_text = all_text.lstrip('\r\n')
     if all_text := all_text.rstrip('\r\n'):

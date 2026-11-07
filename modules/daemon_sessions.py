@@ -42,7 +42,9 @@ from .rpc import (
     _extract_available_commands,
     _extract_session_info_update,
     _extract_usage_update,
+    _flush_replay_thoughts,
     _replay_text,
+    _StreamState,
     format_replay_update,
 )
 
@@ -308,6 +310,7 @@ def switch_daemon_session(window_id: int, session_id: str,
             if replay and state.supports('load'):
                 chunks: list[str] = []
                 tool_state: dict = {}
+                replay_state = _StreamState()
                 commands_holder: list = []
                 usage_holder: list = []
                 config_holder: list = []
@@ -349,16 +352,22 @@ def switch_daemon_session(window_id: int, session_id: str,
                         else:
                             pending_strip[0] = ''
                         if text:
-                            chunks.append(f'\n> **User**: {text}\n')
+                            prefix = _flush_replay_thoughts(replay_state, thoughts_mode) or '\n'
+                            chunks.append(f'{prefix}> **User**: {text}\n')
+                            replay_state.at_turn_start = False
+                            replay_state.at_line_start = True
+                            replay_state.last_was_tool = False
                         return
                     text = format_replay_update(
-                        update, thoughts_mode, show_tools, tool_state,
+                        update, thoughts_mode, show_tools, tool_state, replay_state,
                     )
                     if text:
                         chunks.append(text)
 
                 try:
                     load_result = await load_session_with_replay(conn, session_id, work_dir, _on_replay)
+                    if tail := _flush_replay_thoughts(replay_state, thoughts_mode):
+                        chunks.append(tail)
                     if commands_holder and commands_holder[-1] is not None:
                         _make_commands_updater(cmd)(commands_holder[-1])
                     if usage_holder:
