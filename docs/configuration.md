@@ -36,8 +36,8 @@ With more than one entry, a quick panel lets you pick; a single entry is auto-se
 | `attach_selection` | `false`     | Auto-attach current selection as context (`@path:line-line`)                                                                     |
 | `context_usage`    | `true`      | Show context token usage in the status bar (e.g. `ctx 27% (53k/200k)`)                                                           |
 | `git_turn_summary` | `"counts"`  | Turn-end git summary: `"diff"` (filenames + patches), `"counts"` (filenames + change counts), `false` (off). `true` = `"counts"` |
-| `turn_end_flash`   | `true`      | Demand OS attention (taskbar flash / banner, never focus steal) when an agent turn ends                                          |
-| `prompt_flash`     | `true`      | Demand OS attention for permission prompts and elicitation questions (they block the turn until answered)                        |
+| `turn_end_flash`   | `true`      | Desktop toast (never focus steal) when an agent turn ends                                                                        |
+| `prompt_flash`     | `true`      | Desktop toast for permission prompts and elicitation questions                                                                   |
 | `actions`          | (see below) | Custom quick actions shown in the prompt panel                                                                                   |
 
 `actions` entries appear as ready-made prompts for selected text via the command palette -> *ACP: Actions*. The selected text is always embedded in an action prompt as a fenced code block, independent of the `attach_selection` setting:
@@ -48,6 +48,16 @@ With more than one entry, a quick panel lets you pick; a single entry is auto-se
     { "title": "Summarize","prompt": "Summarize with key points" }
 ]
 ```
+
+Flash settings never take focus. A turn that ends (or a prompt that blocks while the agent works) never raises a window: the owning window gets a desktop toast named after its project folder, and a prompt panel stays queued until you focus that window. Nothing is sent when the owning window already has focus - the status bar and output already report it there.
+
+| Platform | Toast                                                                                                         | Sound                                                                                                               |
+| -------- | ------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| Windows  | native toast through the WinRT API, registered as `Sublime.Text.ACP.Notifier`; the taskbar button flashes too | `Notification.Default` for turn end, `Notification.Reminder` for prompts (audible even with the "No Sounds" scheme) |
+| macOS    | Notification Center banner                                                                                    | `default` for turn end, `Glass` for prompts                                                                         |
+| Linux    | `notify-send` with the package icon                                                                           | the desktop's own notification sound                                                                                |
+
+Focus Assist / Do Not Disturb suppresses toasts and their sound on Windows; the taskbar flash is then the only signal.
 
 ### Timeouts
 

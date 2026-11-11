@@ -317,6 +317,7 @@ class AcpInputCommand(sublime_plugin.WindowCommand):
         slash_commands = (cache.get_entry(agents, cmd) if cmd else {}).get('commands')
 
         owner_id = daemon_window_id if isinstance(daemon_window_id, int) else self.window.id()
+        ui.clear_pending_input_panel(owner_id)
         if not initial_text:
             initial_text = _pending_drafts.get(owner_id, '')
 
@@ -328,6 +329,7 @@ class AcpInputCommand(sublime_plugin.WindowCommand):
 
         def on_done(text):
             _pending_drafts.pop(owner_id, None)
+            ui.clear_pending_input_panel(owner_id)
             if not exec_state.get('cmd'):
                 sublime.error_message('ACP: No command configured')
                 return
@@ -492,7 +494,10 @@ class AcpStartCommand(sublime_plugin.WindowCommand):
                 broadcast.set_broadcast_status(STATUS_KEY_DAEMON, broadcast.daemon_status_text(agent_name, state.get('agent_cmd')), daemon_window)
                 _start_idle_timer(window_id)
                 refresh_session_cache(window_id)
-                self.window.run_command('acp_input', _acp_input_kwargs(state, session_prompt=SESSION_PROMPT))
+                ui.request_input_panel(
+                    window_id,
+                    _acp_input_kwargs(state, session_prompt=SESSION_PROMPT),
+                )
 
         def is_init_done():
             st = get_state(window_id)
@@ -521,6 +526,7 @@ class AcpStopCommand(sublime_plugin.WindowCommand):
             sublime.status_message('No agent session running in this window')
             return
         agent_name = state.get('agent_name') or 'unknown'
+        ui.clear_pending_input_panel(window_id)
         _stop_daemon_async(
             window_id,
             on_done=lambda: sublime.status_message(f'✓ Agent "{agent_name}" stopped'),
@@ -572,4 +578,11 @@ class AcpWindowCleanupListener(sublime_plugin.EventListener):
 
     def on_pre_close_window(self, window):
         _pending_drafts.pop(window.id(), None)
+        ui.clear_pending_input_panel(window.id())
         ui.forget_one_shot_view(window.id())
+
+    def on_activated(self, view):
+        """Reopen a prompt input panel deferred while the window was away."""
+        window = view.window() if view is not None else None
+        if window is not None:
+            ui.flush_pending_input_panel(window.id())

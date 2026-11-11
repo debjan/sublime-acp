@@ -354,6 +354,16 @@ def _cache_dir() -> Path:
     return Path(sublime.cache_path()) / 'ACP'
 
 
+def _session_label(cmd, session_id: str) -> str:
+    """Return the local title override for *session_id*, or the ID itself."""
+    try:
+        title = cache.get_session_title_override(_cache_dir(), cmd, session_id)
+    except Exception as exc:
+        acp_log('daemon', f'failed to read session title: {exc!r}')
+        return session_id
+    return title or session_id
+
+
 def _update_agent_session_id(cmd, session_id):
     """Update the cached session ID for an agent command."""
     try:
@@ -536,10 +546,10 @@ def _apply_switched_config(cmd, result, replayed) -> None:
 def _notify_turn_end(agent_name: str, status: str, window_id: int | None) -> None:
     """Flash turn-end notices for the owning window.
 
-    Always flashes the in-Sublime status bar; additionally demands OS
-    attention (taskbar/banner, never focus steal) unless `turn_end_flash`
-    is disabled. Thread-safe from the daemon loop. Unknown owners stay
-    silent instead of flashing the active window.
+    Always flashes the in-Sublime status bar; additionally shows a desktop
+    toast (never focus steal) unless `turn_end_flash` is disabled. Thread-safe
+    from the daemon loop. Unknown owners stay silent instead of flashing the
+    active window.
     """
     if not isinstance(window_id, int):
         return
@@ -804,7 +814,7 @@ def _worker_thread(
                 _clear_agent_session_id(cmd)
         else:
             if session_id and status in (STATUS_RESUMED, STATUS_LOADED):
-                on_chunk(f'\n*[Resumed session: {session_id}]*\n\n')
+                on_chunk(f'\n*[Resumed session: {_session_label(cmd, session_id)}]*\n\n')
             elif session_id and status == STATUS_NEW:
                 if session_error:
                     on_chunk(f'\n**[{session_error}]**\n\n')
@@ -1046,7 +1056,7 @@ async def _reconnect_daemon_session(
     new_sid, _ = _finalize_daemon_connection(conn, cmd, init_result, on_usage)
     opened_via = init_result.get('opened_via', STATUS_NEW)
     if opened_via in (STATUS_RESUMED, STATUS_LOADED):
-        _note(f'*[Resumed session: {new_sid}]*\n')
+        _note(f'*[Resumed session: {_session_label(cmd, new_sid)}]*\n')
     else:
         if new_sid:
             _update_agent_session_id(cmd, new_sid)
@@ -1136,21 +1146,18 @@ async def _reconnect_and_resume(state: DaemonState, cmd: list, env: dict,
 def _make_session_info_updater(state):
     """Return a callback folding ``session_info_update`` into the daemon state.
 
-    The agent's title is authoritative: it patches the cached ``session/list``
-    entry's ``title`` and drops any local override recorded for that session.
+    A reported title patches the cached ``session/list`` entry's ``title`` so
+    it can serve as a fallback; metadata-only updates carry no title and leave
+    it alone. A local override set via ``ACP: Rename Session`` is explicit user
+    intent, so it is kept and keeps winning over the agent's title.
     """
     window_id = state.get('window_id')
 
-    def on_session_info(session_id: str, title: str) -> None:
+    def on_session_info(session_id: str, title: str | None) -> None:
+        if title is None:
+            return
         if not state.patch_session(session_id, 'title', title):
             acp_log('daemon', f'session_info_update for uncached sid={session_id}', window_id)
-        # The agent's store is authoritative, so a locally set rename is void.
-        state.patch_session(session_id, 'title_override', '')
-        if cmd := state.get('agent_cmd'):
-            try:
-                cache.set_session_title(_cache_dir(), cmd, session_id, None)
-            except Exception as exc:
-                acp_log('daemon', f'failed to cache session title: {exc!r}')
 
     return on_session_info
 

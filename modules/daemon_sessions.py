@@ -119,7 +119,7 @@ def rename_daemon_session(window_id: int, title: str, on_done: Callable | None =
 
     ACP has no client-to-agent session rename method, so this records the
     title client-side only; the agent's own store keeps its title. The
-    override is dropped if the agent later reports a title for the session.
+    override wins over the agent's title and survives agent restarts.
     """
     ctx = _require_idle_daemon(
         window_id, 'ACP: Wait for the current prompt to finish before renaming', on_done,
@@ -216,6 +216,22 @@ def _ensure_session_output_view(state):
     if window is None:
         return state.get('output_view')
     return _ensure_output_view(window, state, state.get('agent_name') or 'agent')
+
+
+def _session_note_names(cmd: list | None, session_id: str) -> tuple[str, str]:
+    """Return ``(full, short)`` names for session-change notes and status.
+
+    Prefers the local title override from ``ACP: Session Rename``. Falls back
+    to the session ID, with the status line keeping its last 8 characters.
+    """
+    try:
+        title = cache.get_session_title_override(_cache_dir(), cmd, session_id)
+    except Exception as exc:
+        acp_log('session_change', f'failed to read session title: {exc!r}')
+        title = None
+    if title:
+        return title, title
+    return session_id, session_id[-8:]
 
 
 def _finish_session_change(state, cmd, sid, ok, error, success_view, success_status,
@@ -411,11 +427,12 @@ def switch_daemon_session(window_id: int, session_id: str,
             ok, error, replay_text = False, str(exc), None
 
         def _apply():
-            header = f'\n# Switched to session `{session_id}`\n' if (ok and replay_text) else None
+            name, short = _session_note_names(cmd, session_id)
+            header = f'\n# Switched to session `{name}`\n' if (ok and replay_text) else None
             _finish_session_change(
                 state, cmd, session_id, ok, error,
-                lambda sid: (header if header else f'\n*[Switched to session: {sid}]*\n'),
-                lambda sid: f'ACP: Switched to session {sid[-8:]}',
+                lambda sid: (header if header else f'\n*[Switched to session: {name}]*\n'),
+                lambda sid: f'ACP: Switched to session {short}',
                 lambda err: f'\n**[Could not switch session: {err or "unknown error"}]**\n',
                 lambda err: f'ACP: Could not switch session: {err or "unknown error"}',
                 on_done,
@@ -608,10 +625,11 @@ def adopt_manual_session(window_id: int, method: str, params: dict, result) -> N
         if isinstance(result, dict) and result.get('configOptions'):
             _apply_switched_config(cmd, result, None)
             _refresh_daemon_status(st)
+        name, short = _session_note_names(cmd, new_sid)
         _finish_session_change(
             st, cmd, new_sid, True, None,
-            lambda sid: note.format(sid=sid),
-            lambda sid: status.format(sid=sid, short=sid[-8:]),
+            lambda sid: note.format(sid=name),
+            lambda sid: status.format(sid=name, short=short),
             lambda err: f'\n**[Could not switch session: {err or "unknown error"}]**\n',
             lambda err: f'ACP: Could not switch session: {err or "unknown error"}',
             None,

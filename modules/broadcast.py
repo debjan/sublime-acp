@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import sys
-import threading
 from pathlib import Path
 
 import sublime
 
-from . import cache
+from ..protocol import acp_log
+from . import cache, notify
 from .config import SPINNER_INTERVAL_MS, STATUS_KEY_DAEMON, STATUS_KEY_NOTIFY, settings
+
+#: Status-bar prefix that toasts drop, since a toast already names the app.
+_STATUS_PREFIX = 'ACP: '
 
 
 def _broadcast_status(key, value, window=None):
@@ -61,39 +64,35 @@ def flash_notify(text, window_id=None, timeout_ms=5000):
 
 
 def flash_prompt(text, window_id=None) -> None:
-    """Signal an interactive prompt: status flash plus gated OS attention.
+    """Signal an interactive prompt: status flash plus gated desktop toast.
 
-    The status flash always fires; the OS leg (taskbar/banner, never
-    focus steal) honors the ``prompt_flash`` setting (default on).
-    Prompts block the agent turn until answered, so background windows
-    need the nudge. Main-thread safe from any thread.
+    The status flash always fires; the toast (never a focus steal) honors the
+    ``prompt_flash`` setting (default on) and uses the prompt sound. Prompts
+    block the agent turn until answered, so background windows need the nudge.
+    Main-thread safe from any thread.
     """
     flash_notify(text, window_id)
     if settings().get('prompt_flash', True):
-        demand_attention(text, window_id)
+        demand_attention(text, window_id, kind='prompt')
 
 
-def demand_attention(text, window_id=None):
-    """Flash the OS taskbar/dock entry for the owning window (never steals focus).
+def demand_attention(text, window_id=None, kind: str = 'turn_end') -> None:
+    """Signal a finished turn or a blocking prompt for the owning window."""
 
-    Main-thread safe from any thread. No-op when the window is gone.
-    Windows flashes the taskbar button until foregrounded (``FlashWindowEx``);
-    macOS posts a Notification Center banner; Linux tries ``notify-send``.
-    The macOS/Linux subprocess calls run off the UI thread so a slow
-    notification service cannot freeze the editor.
-    """
     def _signal():
         window = None
         if isinstance(window_id, int):
             window = next((w for w in sublime.windows() if w.id() == window_id), None)
         if window is None:
             return
-        if sys.platform == 'win32':
-            _flash_taskbar_window(window)
-        elif sys.platform == 'darwin':
-            threading.Thread(target=_notify_center, args=('ACP', text), daemon=True).start()
-        else:
-            threading.Thread(target=_notify_send, args=('ACP', text), daemon=True).start()
+        if not _owner_unfocused(window):
+            return
+        body = text[len(_STATUS_PREFIX):] if text.startswith(_STATUS_PREFIX) else text
+        label = _window_label(window) if len(sublime.windows()) > 1 else ''
+        message = f'{body} · {label}' if label else body
+        notify.show(message, kind)
+        if sys.platform == 'win32' and not _flash_taskbar_window(window):
+            acp_log('notify', f'taskbar flash failed for window {window.id()}', window.id())
 
     sublime.set_timeout(_signal, 0)
 
@@ -124,56 +123,65 @@ def _flash_taskbar_window(window) -> bool:
         return False
 
 
-def _hidden_window_kwargs() -> dict:
-    """Return Windows-only ``subprocess`` kwargs that keep console windows hidden."""
-    import subprocess
-
-    if sys.platform == 'win32':
-        return {'creationflags': subprocess.CREATE_NO_WINDOW}
-    return {}
-
-
-def _notify_center(title, text) -> bool:
-    """Post a Notification Center banner via osascript; True when posted."""
-    import subprocess
-
-    def _quote(value):
-        return '"' + str(value).replace('\\', '\\\\').replace('"', '\\"') + '"'
-
-    script = f'display notification {_quote(text)} with title {_quote(title)}'
+def _window_label(window) -> str:
+    """Return a short label for *window*: its first folder or project name."""
     try:
-        subprocess.run(
-            ['osascript', '-e', script],
-            capture_output=True, check=False, timeout=5, **_hidden_window_kwargs(),
-        )
+        folders = window.folders()
+    except Exception:
+        folders = []
+    if folders:
+        if name := Path(folders[0]).name:
+            return name
+    try:
+        project = window.project_file_name()
+    except Exception:
+        project = None
+    return Path(project).stem if project else ''
+
+
+def _owner_not_active(window) -> bool:
+    """Return whether *window* is not the window the user is looking at."""
+    try:
+        active = sublime.active_window()
     except Exception:
         return False
-    return True
-
-
-def _notify_send(title, text) -> bool:
-    """Post a desktop notification via ``notify-send`` when available."""
-    import shutil
-    import subprocess
-
-    if shutil.which('notify-send') is None:
+    if active is None:
         return False
     try:
-        subprocess.run(
-            ['notify-send', str(title), str(text)],
-            capture_output=True, check=False, timeout=5, **_hidden_window_kwargs(),
-        )
+        return active.id() != window.id()
     except Exception:
         return False
-    return True
+
+
+def _window_has_os_focus(window) -> bool | None:
+    """Return whether *window* owns OS focus; ``None`` when that is unknown."""
+
+    if sys.platform != 'win32':
+        return None
+    try:
+        import ctypes
+        user32 = ctypes.windll.user32
+        user32.GetForegroundWindow.restype = ctypes.c_void_p
+        foreground = user32.GetForegroundWindow()
+        hwnd = window.hwnd()
+    except Exception:
+        return None
+    if not foreground or not hwnd:
+        return None
+    return foreground == hwnd
+
+
+def _owner_unfocused(window) -> bool:
+    """Return whether the user looks at something other than *window*."""
+
+    if _owner_not_active(window):
+        return True
+    return _window_has_os_focus(window) is False
 
 
 def _pretty_model_name(model: str | None) -> str:
-    """Render a cached model value for the status bar.
+    """Render a cached model value for the status bar."""
 
-    Some agents (e.g. ``dsh acp``) encode the model as a JSON pair
-    like ``["provider", "model"]``; show that as ``provider/model``.
-    """
     if not model:
         return 'default'
     text = str(model).strip()

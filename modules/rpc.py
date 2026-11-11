@@ -181,9 +181,10 @@ def _extract_available_commands(method: str, params: dict) -> tuple[bool, Any]:
 def _extract_session_info_update(method: str, params: dict) -> tuple[bool, str | None, str | None]:
     """Return ``(matched, sessionId, title)`` for a ``session_info_update``.
 
-    All fields are optional on the wire, so *title* is ``None`` both when the
-    agent cleared it and when the notification omitted it. A cleared title is
-    reported as an empty string so callers can distinguish intent from absence.
+    *title* is ``None`` when the notification omitted the field, meaning "no
+    change" - agents use such metadata-only updates to report queue state. An
+    explicit ``null`` title is reported as an empty string so callers can tell
+    a request to clear the title from an update that simply has no title.
     """
     default = (False, None, None)
     if method != 'session/update' or not isinstance(params, dict):
@@ -196,6 +197,8 @@ def _extract_session_info_update(method: str, params: dict) -> tuple[bool, str |
     session_id = params.get('sessionId')
     if not isinstance(session_id, str) or not session_id:
         return default
+    if 'title' not in update:
+        return True, session_id, None
     title = update.get('title')
     if title is None:
         return True, session_id, ''

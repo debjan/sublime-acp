@@ -431,7 +431,7 @@ def append_prompt_turn(view: sublime.View, prompt: str,
                        force_selection: bool = False) -> None:
     """Append the user's prompt followed by a divider before the response."""
     divider = TURN_DIVIDER if dividers_enabled() else '\n'
-    block = f'\n> **User**: {prompt}{divider}'
+    block = f'> **User**: {prompt}{divider}'
     append_to_output_view(view, block)
     if source_view is not None:
         if sel_display := attach_selection_to_prompt('', source_view, force=force_selection):
@@ -640,6 +640,66 @@ def session_row(session: dict, current: str | None) -> tuple[str, str, bool]:
     return title, detail, bool(sid) and sid == current
 
 
+#: Input panels whose reopen was deferred because the owning window was in
+#: the background: showing a panel there activates that window, so the request
+#: is replayed by :func:`flush_pending_input_panel` once the user returns.
+_pending_input_panels: dict[int, dict] = {}
+
+
+def window_is_focused(window: sublime.Window | None) -> bool:
+    """Return whether *window* is the active window and owns OS focus.
+
+    Main thread only. On Windows the OS foreground window must belong to
+    *window* as well: ``sublime`` alone still reports the last active window
+    while another application holds focus.
+    """
+    if window is None:
+        return False
+    try:
+        active = sublime.active_window()
+        if active is None or active.id() != window.id():
+            return False
+    except Exception:
+        return False
+    return owner_has_os_focus(window.id()) is not False
+
+
+def clear_pending_input_panel(window_id: int) -> None:
+    """Forget a deferred input panel for *window_id*."""
+    _pending_input_panels.pop(window_id, None)
+
+
+def flush_pending_input_panel(window_id: int) -> None:
+    """Reopen a deferred prompt input panel now that its window is focused.
+
+    Main thread only (called from the activation listener). The panel is
+    shown only while the window really has focus, so coming back to a window
+    after a turn-end notice restores the prompt box without the panel itself
+    having to activate the window.
+    """
+    pending = _pending_input_panels.get(window_id)
+    if pending is None:
+        return
+    request_input_panel(window_id, pending)
+
+
+def request_input_panel(window_id: int, panel_kwargs: dict) -> None:
+    """Show the ``acp_input`` panel in *window_id*, or defer it while away.
+
+    Main thread only. An input panel activates its window, so a background
+    owner gets the request queued instead and it reopens on activation.
+    """
+    window = window_by_id(window_id)
+    if window is None:
+        _pending_input_panels.pop(window_id, None)
+        return
+    if not window_is_focused(window):
+        _pending_input_panels[window_id] = panel_kwargs
+        return
+    _pending_input_panels.pop(window_id, None)
+    window.run_command('acp_input', panel_kwargs)
+
+
 def reopen_daemon_input_panel(cmd, model, timeout, session_prompt, session_id, agent_name, daemon_window=None, env=None, auth=None, daemon_window_id=None):
     """Re-open the prompt input panel so the user can continue chatting.
 
@@ -647,6 +707,11 @@ def reopen_daemon_input_panel(cmd, model, timeout, session_prompt, session_id, a
     *daemon_window_id* (preferred), *daemon_window* (a window or id), or
     the active window only when no owner was given. Never falls back to
     another window when the owner is known but closed.
+
+    When the owner is in the background the request is deferred instead of
+    shown: an input panel activates its window, so opening one after a turn
+    ends would yank focus away from whatever the user is doing in another
+    window. The deferred panel reopens on activation.
     """
     owner_id = None
     if isinstance(daemon_window_id, int):
@@ -673,7 +738,7 @@ def reopen_daemon_input_panel(cmd, model, timeout, session_prompt, session_id, a
     window = window_by_id(owner_id)
     if window is None:
         return  # owning window closed - never fall back to another window
-    window.run_command('acp_input', {
+    panel_kwargs = {
         'cmd': cmd,
         'model': model,
         'env': env or {},
@@ -683,7 +748,8 @@ def reopen_daemon_input_panel(cmd, model, timeout, session_prompt, session_id, a
         'use_daemon': True,
         'auth': auth,
         'daemon_window_id': owner_id,
-    })
+    }
+    request_input_panel(owner_id, panel_kwargs)
     broadcast.set_broadcast_status(
         STATUS_KEY_DAEMON, broadcast.daemon_status_text(agent_name, cmd), window
     )

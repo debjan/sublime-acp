@@ -400,6 +400,22 @@ async def _ask_text(window_id: int, caption: str, initial: str,
         _active_elicitations[window_id] = _resolve
 
         try:
+            running_loop = asyncio.get_running_loop()
+            deadline = running_loop.time() + remaining if remaining is not None else None
+            if not await ui.wait_for_window_active(
+                window_id, deadline, cancelled=event.is_set,
+                notify_text=f'ACP: input needed - {ui.truncate_middle(caption)}',
+            ):
+                if not event.is_set():
+                    acp_log('elicitation', 'input timed out waiting for focus - cancelling', window_id)
+                return _CANCELLED
+            if event.is_set():
+                return _CANCELLED
+            if deadline is not None:
+                remaining = deadline - running_loop.time()
+                if remaining <= 0:
+                    acp_log('elicitation', 'form timeout exceeded before input - cancelling', window_id)
+                    return _CANCELLED
             ui.on_main(
                 lambda: _show_input(
                     window_id, ui.truncate_middle(caption), initial,

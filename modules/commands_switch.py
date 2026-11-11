@@ -297,9 +297,8 @@ class AcpRenameSessionCommand(sublime_plugin.WindowCommand):
     """Set a local title override for the current session.
 
     ACP defines no client-to-agent session rename method, so the title is
-    recorded client-side only. The agent keeps its own title and, if it later
-    reports one via ``session_info_update``, that agent title wins and the
-    override is dropped.
+    recorded client-side only. The agent keeps its own title, but the local
+    override wins in the session picker and survives agent restarts.
     """
 
     def is_enabled(self) -> bool:

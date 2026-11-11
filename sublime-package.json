@@ -120,6 +120,16 @@
               ],
               "default": "counts"
             },
+            "turn_end_flash": {
+              "type": "boolean",
+              "default": true,
+              "description": "Show a desktop toast when an agent turn ends in a window you are not looking at (never steals focus). Windows: native toast with the 'Default' sound plus a taskbar flash; macOS: banner with the 'default' alert; Linux: notify-send with the package icon."
+            },
+            "prompt_flash": {
+              "type": "boolean",
+              "default": true,
+              "description": "Show a desktop toast for permission prompts and elicitation questions that block the turn (Windows 'Reminder' sound, macOS 'Glass'). The prompt panel itself is deferred until its window has focus."
+            },
             "thoughts": {
               "type": "string",
               "enum": ["enabled", "disabled"],
