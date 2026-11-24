@@ -491,7 +491,7 @@ class AcpStartCommand(sublime_plugin.WindowCommand):
 
             if not state.get('is_busy'):
                 acp_log('daemon_session', f'init completed for "{agent_name}"', window_id)
-                broadcast.set_broadcast_status(STATUS_KEY_DAEMON, broadcast.daemon_status_text(agent_name, state.get('agent_cmd')), daemon_window)
+                broadcast.set_broadcast_status(STATUS_KEY_DAEMON, broadcast.daemon_status_text(state.get('agent_cmd')), daemon_window)
                 _start_idle_timer(window_id)
                 refresh_session_cache(window_id)
                 ui.request_input_panel(
@@ -506,7 +506,7 @@ class AcpStartCommand(sublime_plugin.WindowCommand):
         broadcast.show_spinner(
             view,
             is_init_done,
-            f'{agent_name} initializing',
+            'ACP: initializing',
             on_done=on_done,
         )
 

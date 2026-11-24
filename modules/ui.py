@@ -700,7 +700,7 @@ def request_input_panel(window_id: int, panel_kwargs: dict) -> None:
     window.run_command('acp_input', panel_kwargs)
 
 
-def reopen_daemon_input_panel(cmd, model, timeout, session_prompt, session_id, agent_name, daemon_window=None, env=None, auth=None, daemon_window_id=None):
+def reopen_daemon_input_panel(cmd, model, timeout, session_prompt, session_id, daemon_window=None, env=None, auth=None, daemon_window_id=None):
     """Re-open the prompt input panel so the user can continue chatting.
 
     The panel always opens in the daemon-owning window resolved from
@@ -751,5 +751,5 @@ def reopen_daemon_input_panel(cmd, model, timeout, session_prompt, session_id, a
     }
     request_input_panel(owner_id, panel_kwargs)
     broadcast.set_broadcast_status(
-        STATUS_KEY_DAEMON, broadcast.daemon_status_text(agent_name, cmd), window
+        STATUS_KEY_DAEMON, broadcast.daemon_status_text(cmd), window
     )

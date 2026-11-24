@@ -38,6 +38,7 @@ With more than one entry, a quick panel lets you pick; a single entry is auto-se
 | `git_turn_summary` | `"counts"`  | Turn-end git summary: `"diff"` (filenames + patches), `"counts"` (filenames + change counts), `false` (off). `true` = `"counts"` |
 | `turn_end_flash`   | `true`      | Desktop toast (never focus steal) when an agent turn ends                                                                        |
 | `prompt_flash`     | `true`      | Desktop toast for permission prompts and elicitation questions                                                                   |
+| `notify_command`   | `""`        | External notification program run instead of the system toast; the message is appended as its last argument                      |
 | `actions`          | (see below) | Custom quick actions shown in the prompt panel                                                                                   |
 
 `actions` entries appear as ready-made prompts for selected text via the command palette -> *ACP: Actions*. The selected text is always embedded in an action prompt as a fenced code block, independent of the `attach_selection` setting:
@@ -49,7 +50,7 @@ With more than one entry, a quick panel lets you pick; a single entry is auto-se
 ]
 ```
 
-Flash settings never take focus. A turn that ends (or a prompt that blocks while the agent works) never raises a window: the owning window gets a desktop toast named after its project folder, and a prompt panel stays queued until you focus that window. Nothing is sent when the owning window already has focus - the status bar and output already report it there.
+Flash settings never take focus. A turn that ends (or a prompt that blocks while the agent works) never raises a window: the owning window gets a desktop toast named after its project folder (only while more than one window is open), and a prompt panel stays queued until you focus that window. Nothing is sent while another Sublime window has focus; on Windows the toast is also skipped while you are looking at the owning window itself. macOS and Linux cannot read which application is frontmost, so they still notify there - a redundant toast beats a missed one.
 
 | Platform | Toast                                                                                                         | Sound                                                                                                               |
 | -------- | ------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
@@ -58,6 +59,20 @@ Flash settings never take focus. A turn that ends (or a prompt that blocks while
 | Linux    | `notify-send` with the package icon                                                                           | the desktop's own notification sound                                                                                |
 
 Focus Assist / Do Not Disturb suppresses toasts and their sound on Windows; the taskbar flash is then the only signal.
+
+#### Custom notification program
+
+`notify_command` replaces all three platform helpers above with a program of your choice:
+
+```jsonc
+// notify: ntfy publish mytopic "ACP: Kiro replied · myproject"
+"notify_command": "ntfy publish mytopic",
+
+// explicit argv, no shell-style splitting; {message} positions the text
+"notify_command": ["C:\\Tools\\ntfy.exe", "publish", "mytopic", "{message}"],
+```
+
+A string is split shell-style, so quote paths containing spaces; a list is used verbatim. The message is appended as the last argument unless an argument contains `{message}`, and `{kind}` expands to `turn_end` or `prompt`. Substitution is a single pass, so braces inside the message itself are never expanded. The command is spawned without a shell, so message text cannot be interpreted as a command, and a non-zero exit is logged rather than falling back to a toast. The Windows taskbar flash is unaffected.
 
 ### Timeouts
 

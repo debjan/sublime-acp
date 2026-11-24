@@ -567,11 +567,10 @@ def _refresh_daemon_status(state) -> None:
     window = _window_for_state(state)
     if window is None:
         return
-    agent_name = state.get('agent_name') or 'agent'
     agent_cmd = state.get('agent_cmd')
     ui.on_main(lambda: broadcast.set_broadcast_status(
         STATUS_KEY_DAEMON,
-        broadcast.daemon_status_text(agent_name, agent_cmd),
+        broadcast.daemon_status_text(agent_cmd),
         window,
     ))
 
@@ -1267,9 +1266,9 @@ def _daemon_thread_main(
                     lambda ov=output_view: broadcast.show_spinner(
                         ov,
                         lambda: not state.get('is_busy'),
-                        f'{agent_name} processing',
-                        on_done=lambda ov2=ov, a=agent_name, c=cmd: broadcast.set_broadcast_status(
-                            STATUS_KEY_DAEMON, broadcast.daemon_status_text(a, c), ov2.window()
+                        'ACP: processing',
+                        on_done=lambda ov2=ov, c=cmd: broadcast.set_broadcast_status(
+                            STATUS_KEY_DAEMON, broadcast.daemon_status_text(c), ov2.window()
                         ),
                     ),
                 )
@@ -1370,7 +1369,7 @@ def _daemon_thread_main(
                 ui.on_main(
                     lambda ov=output_view, wid=owner_id: ui.reopen_daemon_input_panel(
                         cmd, model, timeout, session_prompt, state.get('session_id'),
-                        agent_name, wid,
+                        wid,
                         env=state.get('env') or {},
                         auth=state.get('auth'),
                         daemon_window_id=wid if isinstance(wid, int) else None,

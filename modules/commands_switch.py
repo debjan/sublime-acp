@@ -415,7 +415,6 @@ class _AcpSwitchConfigOptionCommand(sublime_plugin.WindowCommand):
             return
 
         label = self.label
-        agent_name = state.get('agent_name') or 'agent'
         owner = self.window
         try:
             owner_id = owner.id()
@@ -514,7 +513,7 @@ class _AcpSwitchConfigOptionCommand(sublime_plugin.WindowCommand):
             sublime.set_timeout(
                 lambda: broadcast.set_broadcast_status(
                     STATUS_KEY_DAEMON,
-                    broadcast.daemon_status_text(agent_name, agent_cmd),
+                    broadcast.daemon_status_text(agent_cmd),
                     self.window,
                 ), 0
             )

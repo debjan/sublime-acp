@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import html
+import re
+import shlex
 import sys
 import threading
 from pathlib import Path
@@ -10,6 +12,7 @@ from pathlib import Path
 import sublime
 
 from ..protocol import acp_log
+from .config import settings
 
 #: AppUserModelId registered under HKCU, so the Windows toast carries a display
 #: name and icon instead of PowerShell's default identity.
@@ -34,6 +37,11 @@ ICON_PNG = 'sublime_text.png'
 #: Seconds a notification helper may run before the worker gives up.
 _NOTIFY_TIMEOUT_S = 15
 
+#: Placeholders substituted in a ``notify_command`` argument.
+_MESSAGE_TOKEN = '{message}'
+_KIND_TOKEN = '{kind}'
+_TOKEN_RE = re.compile('|'.join(re.escape(token) for token in (_MESSAGE_TOKEN, _KIND_TOKEN)))
+
 
 def show(message, kind='turn_end') -> None:
     """Post an OS notification without blocking the caller.
@@ -42,20 +50,62 @@ def show(message, kind='turn_end') -> None:
     a daemon worker and every failure is logged rather than raised. *kind*
     selects the sound, ``'turn_end'`` (default) or ``'prompt'``. The message
     is all the toast carries - the app name is the shell's attribution line,
-    so repeating it in the body would only crowd the toast.
+    so repeating it in the body would only crowd the toast. A non-empty
+    ``notify_command`` setting runs that program instead of the toast.
     """
-    threading.Thread(target=_send, args=(message, kind), daemon=True).start()
+    command = _custom_argv()
+    threading.Thread(target=_send, args=(message, kind, command), daemon=True).start()
 
 
-def _send(message, kind) -> None:
-    """Dispatch to the platform helper and log whether it succeeded."""
-    if sys.platform == 'win32':
+def _send(message, kind, command=None) -> None:
+    """Dispatch to the custom command or the platform helper and log the result."""
+    if command:
+        delivered = _run_custom(command, message, kind)
+    elif sys.platform == 'win32':
         delivered = _toast_win(message, WIN_SOUNDS.get(kind, 'Default'))
     elif sys.platform == 'darwin':
         delivered = _banner_mac(message, MAC_SOUNDS.get(kind, 'default'))
     else:
         delivered = _notify_send(message)
     acp_log('notify', f'{kind} notification delivered={delivered}: {message}')
+
+
+def _custom_argv():
+    """Return the parsed ``notify_command`` argv, or ``None`` when unset."""
+    raw = settings().get('notify_command')
+    if isinstance(raw, str):
+        if not (text := raw.strip()):
+            return None
+        try:
+            argv = shlex.split(text)
+        except ValueError as exc:
+            acp_log('notify', f'notify_command is not parseable: {exc!r}')
+            return None
+    elif isinstance(raw, list) and all(isinstance(part, str) for part in raw):
+        argv = list(raw)
+    else:
+        if raw is not None:
+            acp_log('notify', f'notify_command ignored (not a string or list): {raw!r}')
+        return None
+    if not argv:
+        return None
+    return argv
+
+
+def _run_custom(argv, message, kind) -> bool:
+    """Run the user's notification program and return whether it exited cleanly."""
+    command = [_fill(arg, message, kind) for arg in argv]
+    # Test the template, not the filled arguments: a message that mentions
+    # ``{message}`` must not suppress the implicit trailing argument.
+    if not any(_MESSAGE_TOKEN in arg for arg in argv):
+        command.append(message)
+    return _run(command)
+
+
+def _fill(arg, message, kind) -> str:
+    """Substitute placeholders in one argument template in a single pass."""
+    values = {_MESSAGE_TOKEN: str(message), _KIND_TOKEN: str(kind)}
+    return _TOKEN_RE.sub(lambda match: values[match.group(0)], arg)
 
 
 def _toast_win(message, sound) -> bool:
@@ -204,8 +254,7 @@ def _notify_send(message) -> bool:
         acp_log('notify', 'notify-send is not installed')
         return False
     command = ['notify-send', '--app-name', APP_NAME, '--urgency=normal']
-    icon = _icon_path(ICON_PNG)
-    if icon:
+    if icon := _icon_path(ICON_PNG):
         command += ['--icon', icon]
     if _run([*command, APP_NAME, message]):
         return True

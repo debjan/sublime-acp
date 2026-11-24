@@ -127,6 +127,12 @@
     // Same for permission prompts and elicitation questions
     "prompt_flash": true,
 
+    // Optional external notification program, replacing the system toast.
+    // The message is appended as the last argument, so "ntfy" runs
+    // `ntfy "message"` and "ntfy publish mytopic" runs
+    // `ntfy publish mytopic "message"`.
+    "notify_command": "",
+
     // Hard cap in seconds for an open permission prompt: after this the prompt
     // is denied and the turn continues (0 = wait forever). Prompts are queued
     // per window, so back-to-back requests each get their own panel.

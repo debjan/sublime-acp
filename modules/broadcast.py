@@ -172,11 +172,19 @@ def _window_has_os_focus(window) -> bool | None:
 
 
 def _owner_unfocused(window) -> bool:
-    """Return whether the user looks at something other than *window*."""
+    """Return whether the user looks at something other than *window*.
+
+    Another Sublime window in front always counts, and on Windows the OS
+    foreground window is compared as well, so another application in front
+    counts too. Elsewhere OS focus cannot be read: ``sublime.active_window()``
+    keeps naming the owning window while another app is frontmost, so the
+    answer is ``None`` there and is treated as unfocused - a redundant toast
+    beats a missed one.
+    """
 
     if _owner_not_active(window):
         return True
-    return _window_has_os_focus(window) is False
+    return _window_has_os_focus(window) is not True
 
 
 def _pretty_model_name(model: str | None) -> str:
@@ -197,10 +205,10 @@ def _pretty_model_name(model: str | None) -> str:
     return text
 
 
-def daemon_status_text(agent_name: str, agent_cmd: list | None = None) -> str:
-    """Return the daemon status text, appending the current model name."""
+def daemon_status_text(agent_cmd: list | None = None) -> str:
+    """Return the daemon status text showing only the current model name."""
     model = cache.get_model_name(Path(sublime.cache_path()) / 'ACP', agent_cmd)
-    return f'✓ ACP: {agent_name} [{_pretty_model_name(model)}]'
+    return f'✓ ACP: {_pretty_model_name(model)}'
 
 
 def _compact_tokens(value: int) -> str:

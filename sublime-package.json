@@ -130,6 +130,21 @@
               "default": true,
               "description": "Show a desktop toast for permission prompts and elicitation questions that block the turn (Windows 'Reminder' sound, macOS 'Glass'). The prompt panel itself is deferred until its window has focus."
             },
+            "notify_command": {
+              "oneOf": [
+                {
+                  "type": "string",
+                  "description": "External notification program run instead of the system toast, split shell-style: 'ntfy' runs `ntfy \"message\"`, 'ntfy publish mytopic' runs `ntfy publish mytopic \"message\"`. '{message}' and '{kind}' ('turn_end' or 'prompt') placeholders are substituted when present."
+                },
+                {
+                  "type": "array",
+                  "items": { "type": "string" },
+                  "minItems": 1,
+                  "description": "External notification program as an argv list, used verbatim (no shell-style splitting): ['ntfy', 'publish', 'mytopic']. The message is appended unless an item contains the '{message}' placeholder."
+                }
+              ],
+              "default": ""
+            },
             "thoughts": {
               "type": "string",
               "enum": ["enabled", "disabled"],

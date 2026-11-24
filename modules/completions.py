@@ -195,11 +195,10 @@ class AcpFileCompletionListener(sublime_plugin.EventListener):
         state = _get_state(win.id())
         if state is None or not state.is_running():
             return
-        agent_name = state.get('agent_name') or 'agent'
         if state.get('is_busy'):
             text = 'ACP: processing...'
         else:
-            text = broadcast.daemon_status_text(agent_name, state.get('agent_cmd'))
+            text = broadcast.daemon_status_text(state.get('agent_cmd'))
         if view.get_status(STATUS_KEY_DAEMON) != text:
             view.set_status(STATUS_KEY_DAEMON, text)
         if settings().get('context_usage', True):
