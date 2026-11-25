@@ -1,8 +1,9 @@
-"""Git-based turn summary for daemon sessions.
+"""Git-based turn summaries and optional daemon-turn checkpoints.
 
 Snapshots ``git status`` + ``HEAD`` + per-file content hashes before each
 prompt and renders a markdown summary afterwards, so only the current
-turn's changes are reported even when the tree was already dirty.
+turn's changes are reported even when the tree was already dirty. Optional
+checkpoint refs preserve worktree and index state, including new files.
 Non-git workdirs are a silent no-op.
 """
 
@@ -11,8 +12,12 @@ from __future__ import annotations
 import difflib
 import hashlib
 import os
+import re
+import shutil
 import subprocess
 import sys
+import tempfile
+import time
 from itertools import islice
 from typing import Any
 
@@ -25,6 +30,7 @@ MAX_SNAPSHOT_BYTES = 200_000
 GIT_SUMMARY_OFF = 'off'
 GIT_SUMMARY_COUNTS = 'counts'
 GIT_SUMMARY_DIFF = 'diff'
+GIT_CHECKPOINT_RETENTION = 100
 
 
 def resolve_mode(value: Any) -> str:
@@ -48,11 +54,17 @@ GIT_TIMEOUT_QUICK = 10
 GIT_TIMEOUT_DIFF = 30
 
 
-def _run_git(work_dir: str, *args: str, timeout: int = GIT_TIMEOUT_QUICK) -> str | None:
-    """Run a git command in *work_dir*, return stdout or ``None`` on failure.
+def _run_git(
+    work_dir: str,
+    *args: str,
+    timeout: int = GIT_TIMEOUT_QUICK,
+    raise_on_error: bool = False,
+    env: dict[str, str] | None = None,
+) -> str | None:
+    """Run Git in *work_dir*, returning stdout or ``None`` on best-effort failure.
 
-    All invocations are read-only, so ``--no-optional-locks`` is passed to
-    avoid blocking on (or triggering) index/background maintenance locks.
+    ``raise_on_error`` is used for checkpoint writes, which must not fail
+    silently. Best-effort calls disable optional locks and discard stderr.
     """
     try:
         hide_kwargs: dict[str, Any] = {}
@@ -61,23 +73,141 @@ def _run_git(work_dir: str, *args: str, timeout: int = GIT_TIMEOUT_QUICK) -> str
             startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
             startupinfo.wShowWindow = subprocess.SW_HIDE
             hide_kwargs['startupinfo'] = startupinfo
+        command = ['git', '-C', work_dir]
+        if not raise_on_error:
+            command.append('--no-optional-locks')
+        command.extend(args)
         proc = subprocess.run(
-            ['git', '-C', work_dir, '--no-optional-locks', *args],
+            command,
             stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
+            stderr=subprocess.PIPE if raise_on_error else subprocess.DEVNULL,
             timeout=timeout,
             check=False,
             creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
+            env=env,
             **hide_kwargs,
         )
-    except Exception:
+    except Exception as exc:
+        if raise_on_error:
+            raise RuntimeError(f'git {args[0]} failed: {exc}') from exc
         return None
     if proc.returncode != 0:
+        if raise_on_error:
+            detail = proc.stderr.decode('utf-8', errors='replace').strip()
+            raise RuntimeError(f'git {args[0]} failed: {detail or proc.returncode}')
         return None
     try:
         return proc.stdout.decode('utf-8', errors='replace')
-    except Exception:
+    except Exception as exc:
+        if raise_on_error:
+            raise RuntimeError(f'git {args[0]} failed: {exc}') from exc
         return None
+
+
+def _run_git_required(
+    work_dir: str,
+    *args: str,
+    timeout: int = GIT_TIMEOUT_QUICK,
+    env: dict[str, str] | None = None,
+) -> str:
+    """Run Git and require successful textual output."""
+    output = _run_git(
+        work_dir, *args, timeout=timeout, raise_on_error=True, env=env,
+    )
+    if output is None:
+        raise RuntimeError(f'git {args[0]} returned no output')
+    return output
+
+
+def _sanitize_ref_part(value: str | None, fallback: str = 'unknown') -> str:
+    """Normalize *value* into a safe Git refname component fragment."""
+    cleaned = re.sub(r'[^A-Za-z0-9._-]+', '-', (value or '').strip()).strip('.-')
+    cleaned = re.sub(r'\.{2,}', '.', cleaned).lower()
+    if cleaned.endswith('.lock'):
+        cleaned = f'{cleaned[:-5]}-lock'.strip('.-')
+    return cleaned or fallback
+
+
+def _new_checkpoint_paths(status: str) -> list[str]:
+    """Extract untracked (``??``) and intent-to-add (`` A``) paths from ``status -z``."""
+    paths: list[str] = []
+    tokens = iter(status.split('\0'))
+    for entry in tokens:
+        if len(entry) < 4:
+            continue
+        xy, path = entry[:2], entry[3:]
+        if xy[0] in ('R', 'C') or xy[1] in ('R', 'C'):
+            next(tokens, None)
+        if xy in ('??', ' A'):
+            paths.append(path)
+    return paths
+
+
+def create_checkpoint(work_dir: str, session_id: str | None, agent_name: str) -> str | None:
+    """Save worktree and index changes under a retained ACP checkpoint ref.
+
+    Git's stash object keeps staged and unstaged state without changing
+    ``HEAD``, the real index, or the worktree. New non-ignored files are
+    included using a temporary index.
+
+    Args:
+        work_dir: Working directory inside or at the Git repository.
+        session_id: The ACP session ID for checkpoint naming.
+        agent_name: The agent name for checkpoint naming.
+
+    Returns:
+        The created ref name, or ``None`` when the workdir is not a Git repo
+        or has no tracked or new non-ignored changes.
+    """
+    top_level = _run_git(work_dir, 'rev-parse', '--show-toplevel')
+    if top_level is None:
+        return None
+    if not (repo_root := top_level.strip()):
+        return None
+    if _run_git(repo_root, 'rev-parse', '--verify', 'HEAD') is None:
+        return None
+
+    index_path = _run_git_required(repo_root, 'rev-parse', '--git-path', 'index').strip()
+    if not os.path.isabs(index_path):
+        index_path = os.path.abspath(os.path.join(repo_root, index_path))
+
+    fd, temp_index = tempfile.mkstemp(
+        prefix='acp-checkpoint-', suffix='.index', dir=os.path.dirname(index_path),
+    )
+    os.close(fd)
+    try:
+        if os.path.exists(index_path):
+            shutil.copyfile(index_path, temp_index)
+        else:
+            # Remove the 0-byte placeholder so Git initializes a fresh index rather
+            # than rejecting it with "index file smaller than expected".
+            os.unlink(temp_index)
+        env = os.environ.copy()
+        env['GIT_INDEX_FILE'] = temp_index
+
+        status = _run_git_required(repo_root, 'status', '--porcelain=v1', '-z', '--untracked-files=all')
+        if new_paths := _new_checkpoint_paths(status):
+            _run_git_required(repo_root, 'add', '-f', '-A', '--', *new_paths, env=env)
+
+        checkpoint = _run_git_required(repo_root, 'stash', 'create', env=env).strip()
+        if not checkpoint:
+            return None
+
+        safe_agent = _sanitize_ref_part(agent_name, 'agent')
+        safe_session = _sanitize_ref_part(session_id, 'session')
+        ref = f'refs/acp/checkpoints/{time.time_ns()}-{safe_agent}-{safe_session}'
+        _run_git_required(repo_root, 'update-ref', ref, checkpoint, '0' * len(checkpoint))
+
+        refs_out = _run_git_required(
+            repo_root, 'for-each-ref', '--format=%(refname)', '--sort=-refname', 'refs/acp/checkpoints',
+        )
+        old_refs = refs_out.splitlines()[GIT_CHECKPOINT_RETENTION:]
+        for old_ref in old_refs:
+            _run_git_required(repo_root, 'update-ref', '-d', old_ref)
+        return ref
+    finally:
+        if os.path.exists(temp_index):
+            os.unlink(temp_index)
 
 
 def _parse_status(output: str) -> dict[str, str]:
@@ -94,12 +224,16 @@ def _parse_status(output: str) -> dict[str, str]:
     return entries
 
 
-def _read_worktree(work_dir: str, path: str) -> tuple[str | None, str | None, bool]:
+def _read_worktree(
+    work_dir: str,
+    path: str,
+    read_content: bool = True,
+) -> tuple[str | None, str | None, bool]:
     """Fingerprint the worktree file at *path*.
 
     Returns ``(digest, text, binary)``; *digest* is ``None`` when the file
-    is missing, *text* is ``None`` for binary or oversized files (change
-    still detectable via *digest*).
+    is missing, *text* is ``None`` for binary, oversized, or hash-only
+    reads (change still detectable via *digest*).
     """
     try:
         full = os.path.join(work_dir, *path.split('/'))
@@ -109,6 +243,8 @@ def _read_worktree(work_dir: str, path: str) -> tuple[str | None, str | None, bo
         with open(full, 'rb') as f:
             for block in iter(lambda: f.read(65536), b''):
                 digest_obj.update(block)
+                if not read_content:
+                    continue
                 if len(prefix) < MAX_SNAPSHOT_BYTES:
                     take = min(len(block), MAX_SNAPSHOT_BYTES - len(prefix))
                     prefix += block[:take]
@@ -117,6 +253,8 @@ def _read_worktree(work_dir: str, path: str) -> tuple[str | None, str | None, bo
         digest = digest_obj.hexdigest()
     except Exception:
         return None, None, False
+    if not read_content:
+        return digest, None, False
     raw = bytes(prefix)
     if b'\0' in raw[:8192]:
         return digest, None, True
@@ -128,11 +266,12 @@ def _read_worktree(work_dir: str, path: str) -> tuple[str | None, str | None, bo
         return digest, None, False
 
 
-def snapshot(work_dir: str) -> dict[str, Any] | None:
-    """Capture git ``HEAD`` + status + file contents; ``None`` when not a repo.
+def snapshot(work_dir: str, include_content: bool = True) -> dict[str, Any] | None:
+    """Capture git ``HEAD`` + status + file fingerprints; ``None`` when not a repo.
 
     Content blobs let :func:`summarize` isolate the turn's own delta on
     files that were already dirty, and skip files the turn didn't touch.
+    Pass ``include_content=False`` when only change detection is needed.
     """
     head = _run_git(work_dir, 'rev-parse', 'HEAD')
     status = _run_git(work_dir, 'status', '--porcelain=v1', '--untracked-files=all')
@@ -141,7 +280,7 @@ def snapshot(work_dir: str) -> dict[str, Any] | None:
     entries = _parse_status(status)
     blobs: dict[str, dict[str, Any]] = {}
     for path in list(entries)[:MAX_SNAPSHOT_FILES]:
-        digest, text, binary = _read_worktree(work_dir, path)
+        digest, text, binary = _read_worktree(work_dir, path, read_content=include_content)
         blobs[path] = {'hash': digest, 'content': text, 'binary': binary}
     return {'head': head.strip(), 'status': entries, 'blobs': blobs}
 
@@ -229,33 +368,23 @@ def _new_paths(before: dict[str, str], after: dict[str, str]) -> list[str]:
     )
 
 
-def summarize(
+def _detect_turn_entries(
     base: dict[str, Any] | None,
     work_dir: str,
-    include_diff: bool = True,
-) -> str | None:
-    """Report only the turn's own changes vs *base*; ``None`` when no change.
-
-    Args:
-        base: Snapshot from :func:`snapshot` taken before the turn.
-        work_dir: Working directory of the git repo.
-        include_diff: When ``False``, only the "Changed files" filename list
-            is rendered and per-file ``diff`` fences are omitted.
-    """
+    read_content: bool = True,
+) -> tuple[list[tuple[str, str]], dict[str, tuple[str | None, str | None, bool]]] | None:
+    """Return ``(entries, current_blobs)`` changed since *base*, or ``None``."""
     if base is None:
         return None
     status_out = _run_git(work_dir, 'status', '--porcelain=v1', '--untracked-files=all')
-    head_out = _run_git(work_dir, 'rev-parse', 'HEAD')
     if status_out is None:
         return None
-    head = head_out.strip() if head_out else base['head']
-    head_moved = head != base['head']
     before: dict[str, str] = base['status']
     blobs: dict[str, dict[str, Any]] = base.get('blobs') or {}
     after = _parse_status(status_out)
     # Fingerprint only files dirty at turn start (clean-start paths use git diff)
     current: dict[str, tuple[str | None, str | None, bool]] = {
-        p: _read_worktree(work_dir, p) for p in before
+        p: _read_worktree(work_dir, p, read_content=read_content) for p in before
     }
 
     def _changed(path: str) -> bool:
@@ -288,6 +417,37 @@ def summarize(
 
     if not entries:
         return None
+    return entries, current
+
+
+def has_turn_changes(base: dict[str, Any] | None, work_dir: str) -> bool:
+    """Return ``True`` when the worktree changed relative to *base*."""
+    return _detect_turn_entries(base, work_dir, read_content=False) is not None
+
+
+def summarize(
+    base: dict[str, Any] | None,
+    work_dir: str,
+    include_diff: bool = True,
+) -> str | None:
+    """Report only the turn's own changes vs *base*; ``None`` when no change.
+
+    Args:
+        base: Snapshot from :func:`snapshot` taken before the turn.
+        work_dir: Working directory of the git repo.
+        include_diff: When ``False``, only the "Changed files" filename list
+            is rendered and per-file ``diff`` fences are omitted.
+    """
+    if base is None:
+        return None
+    detected = _detect_turn_entries(base, work_dir, read_content=True)
+    if detected is None:
+        return None
+    entries, current = detected
+    blobs: dict[str, dict[str, Any]] = base.get('blobs') or {}
+    head_out = _run_git(work_dir, 'rev-parse', 'HEAD')
+    head = head_out.strip() if head_out else base['head']
+    head_moved = head != base['head']
 
     # One batched git diff covers files that were clean at turn start
     # (worktree-vs-HEAD there equals the turn's own delta). Scoped to

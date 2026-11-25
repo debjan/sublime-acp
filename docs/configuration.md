@@ -30,16 +30,17 @@ With more than one entry, a quick panel lets you pick; a single entry is auto-se
 
 ### Prompts and context
 
-| Setting            | Default     | Purpose                                                                                                                          |
-| ------------------ | ----------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `session_prompt`   |             | Custom session prompt prepended to agent session                                                                                 |
-| `attach_selection` | `false`     | Auto-attach current selection as context (`@path:line-line`)                                                                     |
-| `context_usage`    | `true`      | Show context token usage in the status bar (e.g. `ctx 27% (53k/200k)`)                                                           |
-| `git_turn_summary` | `"counts"`  | Turn-end git summary: `"diff"` (filenames + patches), `"counts"` (filenames + change counts), `false` (off). `true` = `"counts"` |
-| `turn_end_flash`   | `true`      | Desktop toast (never focus steal) when an agent turn ends                                                                        |
-| `prompt_flash`     | `true`      | Desktop toast for permission prompts and elicitation questions                                                                   |
-| `notify_command`   | `""`        | External notification program run instead of the system toast; the message is appended as its last argument                      |
-| `actions`          | (see below) | Custom quick actions shown in the prompt panel                                                                                   |
+| Setting                | Default     | Purpose                                                                                                                                   |
+| ---------------------- | ----------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `session_prompt`       |             | Custom session prompt prepended to agent session                                                                                          |
+| `attach_selection`     | `false`     | Auto-attach current selection as context (`@path:line-line`)                                                                              |
+| `context_usage`        | `true`      | Show context token usage in the status bar (e.g. `ctx 27% (53k/200k)`)                                                                    |
+| `git_turn_summary`     | `"counts"`  | Turn-end git summary: `"diff"` (filenames + patches), `"counts"` (filenames + change counts), `false` (off). `true` = `"counts"`          |
+| `git_turn_checkpoints` | `false`     | Save worktree and index state after each daemon turn under `refs/acp/checkpoints/`; keeps the latest 100 refs. Ignored files are omitted. |
+| `turn_end_flash`       | `true`      | Desktop toast (never focus steal) when an agent turn ends                                                                                 |
+| `prompt_flash`         | `true`      | Desktop toast for permission prompts and elicitation questions                                                                            |
+| `notify_command`       | `""`        | External notification program run instead of the system toast; the message is appended as its last argument                               |
+| `actions`              | (see below) | Custom quick actions shown in the prompt panel                                                                                            |
 
 `actions` entries appear as ready-made prompts for selected text via the command palette -> *ACP: Actions*. The selected text is always embedded in an action prompt as a fenced code block, independent of the `attach_selection` setting:
 

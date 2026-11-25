@@ -120,6 +120,11 @@
               ],
               "default": "counts"
             },
+            "git_turn_checkpoints": {
+              "type": "boolean",
+              "default": false,
+              "description": "Save worktree and index state after each daemon turn under refs/acp/checkpoints/. Keeps the latest 100 refs; ignored files are omitted."
+            },
             "turn_end_flash": {
               "type": "boolean",
               "default": true,

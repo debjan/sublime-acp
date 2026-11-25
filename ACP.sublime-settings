@@ -93,6 +93,10 @@
     //   false        - disabled entirely
     "git_turn_summary": "counts",
 
+    // Save worktree + index state after each daemon turn as a Git ref.
+    // Keeps the latest 100 refs under refs/acp/checkpoints; ignored files are omitted.
+    "git_turn_checkpoints": false,
+
     // How agent thought chunks (thinking...) are surfaced:
     //   "enabled"  - thoughts render in the output view as blockquotes (default)
     //   "disabled" - thoughts are dropped; view shows the reply only

@@ -1301,7 +1301,15 @@ def _daemon_thread_main(
                         state.set(permission_pending=False)
 
                 git_mode = git_summary.resolve_mode(settings.get('git_turn_summary', 'counts'))
-                git_base = await call_in_thread(git_summary.snapshot, work_dir) if git_mode != git_summary.GIT_SUMMARY_OFF else None
+                git_checkpoints = bool(settings.get('git_turn_checkpoints', False))
+                show_summary = git_mode != git_summary.GIT_SUMMARY_OFF
+                git_base = (
+                    await call_in_thread(
+                        git_summary.snapshot, work_dir, include_content=show_summary,
+                    )
+                    if show_summary or git_checkpoints
+                    else None
+                )
 
                 turn_started = time.monotonic()
                 ok = await send_prompt_and_stream(
@@ -1341,19 +1349,40 @@ def _daemon_thread_main(
 
                 acp_log('daemon_session', f'prompt completed: status={ok}')
                 async_queue.task_done()
-                try:
-                    summary = await call_in_thread(
-                        git_summary.summarize,
-                        git_base, work_dir,
-                        include_diff=(git_mode == git_summary.GIT_SUMMARY_DIFF),
-                    )
-                except Exception as exc:
-                    acp_log('daemon_session', f'git summary failed: {exc}')
-                    summary = None
-                if summary:
-                    ui.on_main(
-                        lambda s=summary, ov=output_view: ui.append_to_output_view(ov, s),
-                    )
+                should_checkpoint = False
+                if git_base is not None:
+                    if show_summary:
+                        try:
+                            summary = await call_in_thread(
+                                git_summary.summarize,
+                                git_base, work_dir,
+                                include_diff=(git_mode == git_summary.GIT_SUMMARY_DIFF),
+                            )
+                        except Exception as exc:
+                            acp_log('daemon_session', f'git summary failed: {exc}')
+                            summary = None
+                        if summary:
+                            ui.on_main(
+                                lambda s=summary, ov=output_view: ui.append_to_output_view(ov, s),
+                            )
+                        should_checkpoint = git_checkpoints and summary is not None
+                    elif git_checkpoints:
+                        try:
+                            should_checkpoint = await call_in_thread(
+                                git_summary.has_turn_changes, git_base, work_dir,
+                            )
+                        except Exception as exc:
+                            acp_log('daemon_session', f'git change check failed: {exc}')
+                if should_checkpoint:
+                    try:
+                        checkpoint = await call_in_thread(
+                            git_summary.create_checkpoint, work_dir, sid, agent_name,
+                        )
+                    except Exception as exc:
+                        acp_log('daemon_session', f'git checkpoint failed: {exc}')
+                    else:
+                        if checkpoint:
+                            acp_log('daemon_session', f'git checkpoint created: {checkpoint}')
                 ui.append_turn_end(
                     output_view,
                     turn_started,
